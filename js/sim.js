@@ -8,7 +8,8 @@ import { frame, seatsOf, queueSpot, layoutOk, snapItem, cellsOf, NODES, findPath
 import { rng, clamp, pickWeighted, uid } from './util.js';
 
 const TYPES = Object.keys(CUSTOMERS);
-const SIGN_R = 5.5, SIGN_MAX = 6; // 看板に気づく距離・ついて来る人数
+const SIGN_R = 5.5, SIGN_MAX = 6;
+const PUSH_R = 0.75, PUSHABLE = new Set(['pass', 'go', 'follow', 'pushed']); // ぶつかって押せる距離・押せるお客さん // 看板に気づく距離・ついて来る人数
 export const POSE = { walk: 0, stand: 1, sit: 2, cook: 3, carry: 4, wave: 5 };
 const PLAYER_COOK = 2.0; // 自分で作ると速い
 const MAX_PEOPLE = 170;
@@ -438,6 +439,7 @@ export class World {
     }
     this.runLater(dt);
     this.signboards(dt);
+    this.pushCustomers();
     for (const p of [...this.people.values()]) this.step(p, dt);
     for (const [o, rt] of this.rt) this.stepShop(o, rt, dt);
     if (this.t >= OPEN_TIME) return 'end';
@@ -462,6 +464,34 @@ export class World {
         } else if (this.rnd() < dt * 0.5) p.noSign = p.noSign || this.rnd() < 0.15; // 興味がない人もいる
       }
     }
+  }
+  // プレイヤーがぶつかるとお客さんを押せる。お店の区画まで押しこむとそのまま入店
+  pushCustomers() {
+    for (const av of this.avatars.values()) {
+      for (const p of this.people.values()) {
+        if (p.kind !== 'cust' || !PUSHABLE.has(p.state)) continue;
+        const dx = p.x - av.x, dz = p.z - av.z, d = Math.hypot(dx, dz);
+        if (d >= PUSH_R || d < 1e-4) continue;
+        const k = PUSH_R - d;
+        p.x += dx / d * k; p.z += dz / d * k;
+        if (p.state !== 'pushed') { p.before = p.state; p.state = 'pushed'; p.path = []; this.emote(p, '💦', 1); }
+        p.pushT = 0; p.rot = Math.atan2(-dx, -dz);
+        const lot = LOTS.find((L) => Math.abs(p.x - L.x) < 7 && p.z * L.side > 6.6);
+        const shop = lot && Object.values(this.shops).find((x) => x.lot === lot.id);
+        if (shop) { p.follow = null; p.noSign = true; p.target = null; this.arriveShop(p, shop.owner); }
+      }
+    }
+  }
+  stepPushed(p, dt) {
+    p.pose = POSE.stand;
+    p.pushT += dt;
+    if (p.pushT < 1.2) return;
+    // 押されなくなったら、もとの行動にもどる
+    if (p.before === 'follow' && p.follow) { p.state = 'follow'; return; }
+    if (p.before === 'go' && p.target && this.shops[p.target]) {
+      p.state = 'go'; this.route(p, nearestNode(p.x, p.z), LOT_NODE[this.shops[p.target].lot]); return;
+    }
+    this.resume(p);
   }
   stepFollow(p, dt) {
     const av = this.avatars.get(p.follow), shop = this.shops[p.follow];
@@ -523,6 +553,7 @@ export class World {
     const T = CUSTOMERS[p.type];
     switch (p.state) {
       case 'follow': this.stepFollow(p, dt); break;
+      case 'pushed': this.stepPushed(p, dt); break;
       case 'pass': case 'go': case 'leave':
         p.pose = POSE.walk;
         if (this.walk(p, dt)) {

@@ -1435,13 +1435,13 @@ function updateHUD(dt) {
   const ab = $('auto-btn');
   ab.classList.toggle('hidden', G.phase !== 'open');
   ab.classList.toggle('on', G.auto);
-  ab.textContent = G.auto ? '🤖 オート ON' : '🤖 オート OFF';
+  ab.innerHTML = `<b>🤖</b><span> オート ${G.auto ? 'ON' : 'OFF'}</span>`;
   $('poop-btn').classList.toggle('hidden', !['prep', 'open'].includes(G.phase) || !myShops().length);
   const sb = $('sign-btn');
   sb.classList.toggle('hidden', G.phase !== 'open');
   sb.classList.toggle('on', !!G.me3d.sign);
   const fol = G.dyn?.people ? G.dyn.people.filter((p) => p.state === 'follow' && p.follow === curKey()).length : 0;
-  sb.textContent = G.me3d.sign ? `🪧 看板中${G.isHost && fol ? `（${fol}人）` : ''}` : '🪧 看板を持つ';
+  sb.innerHTML = `<b>🪧</b><span> ${G.me3d.sign ? `看板中${G.isHost && fol ? `（${fol}人）` : ''}` : '看板を持つ'}</span>`;
   $('btn-nextshop').classList.toggle('hidden', myShops().length < 2);
   $('joy').classList.toggle('hidden', !TOUCH || !['prep', 'open'].includes(G.phase) || !$('modal').classList.contains('hidden'));
   document.body.classList.toggle('prep-open', !$('prep').classList.contains('hidden'));
@@ -1576,5 +1576,5 @@ function orderRid(owner, oid) {
 }
 
 // デバッグ・テスト用
-window.__mm = { G, Store, views, camera, regionAt, canMove, joinCode, resumeLast };
+window.__mm = { G, Store, views, camera, regionAt, canMove, joinCode, resumeLast, get town3d() { return town3d; } };
 void recipeOf; void seatsOf; void GFX; void GFX_NAMES;

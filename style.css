@@ -167,5 +167,44 @@ body.hit::after { content: ''; position: fixed; inset: 0; pointer-events: none; 
 .item.grow small { display: block; margin-top: 2px; }
 .item.grow .bar { width: 70px; }
 @media (min-width: 701px) { body.prep-open .rightbar { right: calc(min(400px, 100% - 20px) + 20px); top: 64px; } }
-@media (max-width: 700px) { body.prep-open .rightbar { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; max-width: 60%; } }
 .poop-btn { bottom: 242px; }
+.auto-btn b { font-weight: inherit; }
+/* ===== スマホ対応 ===== */
+.field input, .field select { min-width: 0; }
+.cols > *, .panel > * { min-width: 0; }
+.genres { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.scroll-x, table.res { max-width: 100%; }
+@media (max-width: 700px) {
+  .screen { padding: 10px; }
+  .panel { padding: 16px 14px; border-radius: 18px; max-width: 100%; }
+  .panel h2 { font-size: 20px; }
+  .field { flex-wrap: wrap; gap: 4px 8px; }
+  .field span { width: auto; min-width: 70px; font-size: 14px; }
+  .field input, .field select { font-size: 16px; width: 100%; }
+  .genres { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .genres > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  table.res { display: block; overflow-x: auto; font-size: 12px; }
+  table.res th, table.res td { padding: 5px 6px; }
+  .keys-table { font-size: 12px; }
+  .topbar { top: 6px; left: 6px; right: 54px; gap: 4px; }
+  .pill { font-size: 12px; padding: 4px 8px; }
+  .pill.clock { font-size: 14px; letter-spacing: 0; }
+  .pill.buzz i { width: 44px; height: 7px; }
+  .pill.buzz em { display: none; }
+  .rightbar { top: 6px; right: 6px; gap: 4px; flex-direction: column; }
+  .icon { width: 36px; height: 36px; font-size: 17px; border-radius: 10px; padding: 0; }
+  .today { top: 72px; left: 6px; font-size: 11px; padding: 5px 8px; min-width: 0; max-width: 46%; }
+  .toast { top: auto; bottom: 46%; max-width: 90%; white-space: normal; text-align: center; font-size: 13px; padding: 7px 14px; }
+  .auto-btn { right: 30px; width: 48px; height: 48px; padding: 0; font-size: 22px; display: flex; align-items: center; justify-content: center; }
+  .auto-btn span { display: none; }
+  .auto-btn.hidden { display: none; }
+  .auto-btn { bottom: 140px; } .sign-btn { bottom: 196px; } .poop-btn { bottom: 252px; }
+  .act-btn { width: 96px; height: 96px; right: 14px; bottom: 30px; }
+  .hint { bottom: 170px; max-width: calc(100% - 140px); white-space: normal; text-align: center; font-size: 12px; padding: 5px 10px; }
+  .prep { left: 0; right: 0; bottom: 0; width: 100%; height: 55vh; border-radius: 16px 16px 0 0; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tabs button { flex: none; white-space: nowrap; padding: 10px 12px; }
+  body.prep-open .rightbar { top: 6px; }
+  body.prep-open .auto-btn, body.prep-open .joy, body.prep-open .act-btn, body.prep-open .hint { display: none; }
+  .joy { left: 14px; bottom: 24px; width: 120px; height: 120px; }
+}

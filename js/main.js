@@ -79,8 +79,9 @@ function setHUD(on) { $('hud').classList.toggle('hidden', !on); }
   $('loading').classList.add('hide');
   show('title');
   G.phase = 'title';
-  if (PARAMS.get('room')) { $('in-code').value = PARAMS.get('room').toUpperCase(); if (G.name) show('join'); }
   requestAnimationFrame(loop);
+  if (PARAMS.get('room')) { $('in-code').value = PARAMS.get('room').toUpperCase(); if (G.name) show('join'); }
+  else resumeLast();
 })();
 
 function updateLogin() {
@@ -181,6 +182,9 @@ async function createTown() {
 async function hostOpenTown(id) {
   const t = await Store.loadTown(id);
   if (!t) { toast('町を読みこめませんでした'); return; }
+  await hostOpenTownData(t);
+}
+async function hostOpenTownData(t) {
   // 留守のあいだの売上
   const now = Date.now();
   for (const s of Object.values(t.shops)) {
@@ -210,19 +214,44 @@ async function startHosting(t) {
     await G.net.host(G.code);
     G.online = true; $('lobby-err').textContent = '';
   } catch (e) {
-    // だれかがもうこの町を開いていたら、そこに入る
-    if (e?.type === 'unavailable-id') {
+    // だれかがもうこの町を開いていたら、そこに入る。再読み込み直後は前の自分が残っていることがあるので、少し待って何度か試す
+    for (let tries = 0; e?.type === 'unavailable-id' && tries < 6; tries++) {
       G.net.close(); G.net = null;
-      $('lobby-err').textContent = 'だれかがこの町を開いています。その部屋に入ります…';
+      $('lobby-err').textContent = 'この町の部屋につないでいます…';
       if (await joinCode(t.code)) { $('lobby-err').textContent = ''; return; }
-      G.isHost = true; G.world = new World(t);
+      G.isHost = true; G.world = new World(t); G.town = t;
+      await new Promise((r) => setTimeout(r, 2500));
+      G.net = new Net(); G.net.on('data', hostOnData); G.net.on('leave', hostOnLeave);
+      try { await G.net.host(G.code); G.online = true; $('lobby-err').textContent = ''; e = null; } catch (e3) { e = e3; }
     }
+    if (!e) { rememberRoom(); renderLobby(); save(); return; }
     // つながらなければ別のコードで
     try { G.net.close(); G.net = new Net(); G.net.on('data', hostOnData); G.net.on('leave', hostOnLeave); G.code = makeCode(); await G.net.host(G.code); G.online = true; $('lobby-err').textContent = ''; }
     catch (e2) { G.online = false; G.net = null; $('lobby-err').textContent = 'オンラインにつながりませんでした。ひとりで遊べます。'; }
   }
+  rememberRoom();
   renderLobby();
   save();
+}
+// 再読み込みしたら、前の町にもどれるように覚えておく
+function rememberRoom() {
+  if (G.town && G.code) LS.set('mm-last', JSON.stringify({ code: G.code, townId: G.town.id, t: Date.now() }));
+}
+async function resumeLast() {
+  let last = null;
+  try { last = JSON.parse(LS.get('mm-last', 'null')); } catch (e) { /* 無視 */ }
+  if (!last || !G.name || Date.now() - last.t > 12 * 3.6e6) return false;
+  show('lobby'); $('lobby-title').textContent = '🏙️ 前の町にもどっています…'; $('lobby-err').textContent = 'つないでいます…';
+  G.phase = 'joining';
+  // 再読み込みの直後は前の自分がまだ残っていて入れないことがあるので、何度か試す
+  for (let i = 0; i < 3; i++) {
+    if (await joinCode(last.code)) return true;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  // だれもいなければ自分で町を開く
+  if (last.townId) { const t = await Store.loadTown(last.townId); if (t) { t.code = t.code || last.code; await hostOpenTownData(t); return true; } }
+  G.phase = 'title'; show('title');
+  return false;
 }
 
 // ---------- 部屋に入る（子） ----------
@@ -244,17 +273,30 @@ async function joinCode(code) {
     G.net.toHost({ k: 'hello', pid: G.me, name: G.name });
     return true;
   } catch (e) {
+    console.warn('部屋に入れませんでした', e?.type || e?.message);
     G.net.close(); G.net = null;
     return false;
   }
 }
+// ホストが抜けるときは、いちばん最初に来た人に町をまるごと渡す
+function handOver() {
+  if (!G.net || !G.town) return;
+  const next = [...G.players.values()].find((p) => p.online && p.pid !== G.me && p.conn);
+  if (!next) return;
+  for (const s of Object.values(G.town.shops)) if (G.players.get(playerOf(s))?.online) s.lastSeen = Date.now();
+  broadcast({ k: 'handover', to: next.pid, town: G.town });
+}
+addEventListener('pagehide', () => { if (G.isHost) { save(); handOver(); } });
 // 部屋を開いていた人が抜けても、残った人が町を引きついで続ける
 async function onHostLost() {
   if (G.phase === 'title' || !G.town || G.takingOver) return;
   G.takingOver = true;
   G.net?.close(); G.net = null;
-  toast('部屋を開いていた人が抜けました。この町をそのまま続けます…');
-  await new Promise((r) => setTimeout(r, 300 + Math.random() * 1700));
+  const mine = G.handoverTo === G.me;
+  toast(mine ? '👑 ホストを引きつぎました。この町をそのまま続けます' : 'ホストが交代します…');
+  // 渡された人がすぐに開き、ほかの人は少し待ってからそこに入る
+  await new Promise((r) => setTimeout(r, mine ? 0 : G.handoverTo ? 1500 + Math.random() * 1500 : 300 + Math.random() * 1700));
+  G.handoverTo = null;
   G.ppl.clear(); G.dyn = null; G.remoteAv = {};
   const t = G.town; t.code = t.code || G.code;
   const wasPlaying = ['prep', 'open', 'result'].includes(G.phase);
@@ -269,7 +311,10 @@ function lostConnection(msg) {
 }
 function leaveRoom(saveFirst = true) {
   if (G.isHost && saveFirst) save();
-  G.net?.close(); G.net = null;
+  if (saveFirst) LS.set('mm-last', 'null'); // 自分で出たときは、次に開いても自動でもどらない
+  if (G.isHost) handOver();
+  const net = G.net; G.net = null;
+  if (net) setTimeout(() => net.close(), 400);
   G.phase = 'title'; G.town = null; G.world = null; G.dyn = null; G.ppl.clear();
   for (const v of views.values()) v.dispose(); views.clear();
   setHUD(false); $('prep').classList.add('hidden'); $('prep-toggle').classList.add('hidden');
@@ -446,7 +491,8 @@ function clientOnData(d) {
       G.players = new Map(d.players.map((p) => [p.pid, p]));
       for (const o of Object.keys(G.town.shops)) bumpShop(o);
       syncViews(true);
-      if (G.phase === 'title') { G.phase = 'lobby'; placeMeOutside(); }
+      rememberRoom();
+      if (G.phase === 'title' || G.phase === 'joining') { G.phase = 'lobby'; placeMeOutside(); }
       if (d.phase !== G.phase && d.phase !== 'lobby') enterPhase(d.phase, d.phaseT);
       else if (d.phase === 'lobby' && G.phase !== 'lobby') enterPhase('lobby');
       if (G.phase === 'lobby') { show('lobby'); renderLobby(); }
@@ -459,6 +505,7 @@ function clientOnData(d) {
     case 'tick': if (!G.isHost) G.phaseT = d.t; break;
     case 'result': if (!G.isHost) { G.town = d.town; for (const o of Object.keys(G.town.shops)) bumpShop(o); showResult(d.summary); } break;
     case 'poops': if (!G.isHost) G.poops = d.list; break;
+    case 'handover': if (!G.isHost) { G.town = d.town; G.handoverTo = d.to; } break;
     case 'cmdres': { const f = G.pending.get(d.id); if (f) { G.pending.delete(d.id); f(d); } break; }
   }
 }
@@ -1529,5 +1576,5 @@ function orderRid(owner, oid) {
 }
 
 // デバッグ・テスト用
-window.__mm = { G, Store, views, camera, regionAt, canMove };
+window.__mm = { G, Store, views, camera, regionAt, canMove, joinCode, resumeLast };
 void recipeOf; void seatsOf; void GFX; void GFX_NAMES;

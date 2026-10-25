@@ -46,7 +46,7 @@ export function newShop({ owner, ownerName, cpu, name, genre, lot, color }) {
     trophies: [], lastSeen: Date.now(), away: null,
   };
   shop.layout = starterLayout(shop);
-  shop.staff.push({ ...makeStaffCandidate(rng(Date.now() + lot), 'all'), skill: 2, speed: 3, charm: 2, wage: 4500 });
+  shop.staff.push({ ...makeStaffCandidate(rng(Date.now() + lot), 'all'), skill: 2, speed: 3, charm: 2, wage: 3500 });
   return shop;
 }
 
@@ -148,7 +148,7 @@ export class World {
       const rt = this.rt.get(o);
       const td = rt.today;
       const wages = shop.staff.reduce((a, s) => a + s.wage, 0);
-      const rent = LOTS[shop.lot].rent * (0.3 + shop.level * 0.2);
+      const rent = LOTS[shop.lot].rent * (0.2 + shop.level * 0.15);
       shop.money -= wages + rent;
       const profit = td.sales - td.cost - wages - rent - (td.adCost || 0);
       const st = shop.stats;
@@ -216,7 +216,7 @@ export class World {
     const p = this.addPerson({
       kind: 'cust', type, look: Math.floor(r() * 1e9), x: entrance.x, z: entrance.z,
       speed: (type === 'worker' ? 1.55 : type === 'relax' ? 1.05 : 1.3) * (0.9 + r() * 0.2),
-      hungry: r() < (type === 'tourist' ? 0.85 : 0.55), exit: exit.node, checked: new Set(), state: 'pass',
+      hungry: r() < (type === 'tourist' ? 0.85 : 0.65), exit: exit.node, checked: new Set(), state: 'pass',
     });
     // 評判を聞いて来る人（行き先を決めてから歩く）
     const visitP = (type === 'tourist' ? 0.55 : 0.18) + this.flyerBoost();
@@ -409,7 +409,7 @@ export class World {
     // 人が来る
     if (hour < CLOSE_HOUR - 0.3) {
       const nShops = Math.max(1, Object.keys(this.shops).length);
-      const rate = 0.5 * crowdCurve(hour) * (1 + this.town.buzz / 40) * (0.6 + nShops * 0.1);
+      const rate = 0.7 * crowdCurve(hour) * (1 + this.town.buzz / 40) * (0.6 + nShops * 0.1);
       if (this.rnd() < rate * dt) {
         const e = pickWeighted(this.rnd, Object.fromEntries(ENTRANCES.map((x, i) => [i, x.w])));
         this.spawnCustomer(ENTRANCES[+e]);

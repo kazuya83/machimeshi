@@ -35,15 +35,15 @@ export class Town {
 
     // 道路
     const asph = (len, rep) => { const t = TEX.asphalt().clone(); t.repeat.set(rep, 2); t.needsUpdate = true; return new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, color: 0x8a8a8a }); };
-    const road1 = this.mesh(new THREE.PlaneGeometry(240, 8), asph(240, 60), 0, 0.005, 0, { cast: false }); road1.rotation.x = -Math.PI / 2;
+    const road1 = this.mesh(new THREE.PlaneGeometry(208, 8), asph(208, 52), 16, 0.005, 0, { cast: false }); road1.rotation.x = -Math.PI / 2;
     const road2 = this.mesh(new THREE.PlaneGeometry(240, 8), asph(240, 60), 0, 0.006, 0, { cast: false }); road2.rotation.x = -Math.PI / 2; road2.rotation.z = Math.PI / 2;
     // 白線
     const white = new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.6 });
     const yellow = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.6 });
     const line = (x, z, w, d, m = white) => { const l = this.mesh(new THREE.PlaneGeometry(w, d), m, x, 0.012, z, { cast: false }); l.rotation.x = -Math.PI / 2; };
-    for (let x = -118; x < 118; x += 6) if (Math.abs(x) > 9) line(x + 1.5, 0, 3, 0.15, yellow);
+    for (let x = -86; x < 118; x += 6) if (Math.abs(x) > 9) line(x + 1.5, 0, 3, 0.15, yellow);
     for (let z = -118; z < 118; z += 6) if (Math.abs(z) > 9) line(0, z + 1.5, 0.15, 3, yellow);
-    for (const sx of [-1, 1]) { line(0, sx * 3.75, 240, 0.12); line(sx * 3.75, 0, 0.12, 240); }
+    for (const sx of [-1, 1]) { line(16, sx * 3.75, 208, 0.12); line(sx * 3.75, 0, 0.12, 240); }
     // 横断歩道
     const zebra = (cx, cz, alongX) => {
       for (let k = -3; k <= 3; k++) {
@@ -64,14 +64,14 @@ export class Town {
       this.mesh(new THREE.BoxGeometry(w, 0.14, d), swMat(w, d), (x0 + x1) / 2, 0.07, (z0 + z1) / 2, { cast: false });
     };
     for (const s of [-1, 1]) {
-      walk(-120, -4, s < 0 ? -7 : 4, s < 0 ? -4 : 7);
+      walk(-88, -4, s < 0 ? -7 : 4, s < 0 ? -4 : 7);
       walk(4, 120, s < 0 ? -7 : 4, s < 0 ? -4 : 7);
       walk(s < 0 ? -7 : 4, s < 0 ? -4 : 7, -120, -7);
       walk(s < 0 ? -7 : 4, s < 0 ? -4 : 7, 7, 120);
     }
     // 縁石
     for (const s of [-1, 1]) {
-      this.mesh(new THREE.BoxGeometry(116, 0.18, 0.18), curb, -62, 0.09, s * 4.05, { cast: false });
+      this.mesh(new THREE.BoxGeometry(84, 0.18, 0.18), curb, -46, 0.09, s * 4.05, { cast: false });
       this.mesh(new THREE.BoxGeometry(116, 0.18, 0.18), curb, 62, 0.09, s * 4.05, { cast: false });
       this.mesh(new THREE.BoxGeometry(0.18, 0.18, 113), curb, s * 4.05, 0.09, -63.5, { cast: false });
       this.mesh(new THREE.BoxGeometry(0.18, 0.18, 113), curb, s * 4.05, 0.09, 63.5, { cast: false });
@@ -251,7 +251,7 @@ export class Town {
 
   buildLamps() {
     const spots = [];
-    for (let x = -114; x <= 114; x += 14) if (Math.abs(x) > 8) for (const s of [-1, 1]) spots.push([x, s * 4.45, s]);
+    for (let x = -86; x <= 114; x += 14) if (Math.abs(x) > 8) for (const s of [-1, 1]) spots.push([x, s * 4.45, s]);
     for (let z = 14; z <= 112; z += 14) for (const s of [-1, 1]) { spots.push([s * 4.45, z, 0]); spots.push([s * 4.45, -z, 0]); }
     const n = spots.length;
     const poleM = new THREE.MeshStandardMaterial({ color: 0x3a3d42, metalness: 0.6, roughness: 0.4 });
@@ -297,7 +297,8 @@ export class Town {
   updateCars(dt) {
     for (const c of this.cars) {
       c.pos += c.speed * dt * c.lane;
-      if (c.pos > 125) c.pos = -125; if (c.pos < -125) c.pos = 125;
+      const lo = c.onCross ? -125 : -84;
+      if (c.pos > 125) c.pos = lo; if (c.pos < lo) c.pos = 125;
       if (c.onCross) { c.g.position.set(-c.lane * 1.9, 0, c.pos); c.g.rotation.y = c.lane > 0 ? 0 : Math.PI; }
       else { c.g.position.set(c.pos, 0, c.lane * 1.9); c.g.rotation.y = c.lane > 0 ? Math.PI / 2 : -Math.PI / 2; }
     }

@@ -116,7 +116,7 @@ export const Store = {
   },
 
   async saveTown(town) {
-    town.members = [...new Set([...(town.members || []), ...Object.keys(town.shops).filter((k) => !k.startsWith('cpu'))])];
+    town.members = [...new Set([...(town.members || []), ...Object.keys(town.shops).filter((k) => !k.startsWith('cpu') && !k.includes('~'))])];
     town.host = town.host || this.uid;
     const all = localTowns(); all[town.id] = town;
     LS.set('mm-towns', JSON.stringify(all));

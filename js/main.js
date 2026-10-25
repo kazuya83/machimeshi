@@ -16,6 +16,7 @@ import { yen, stars, hourText, clamp, esc } from './util.js';
 const $ = (id) => document.getElementById(id);
 const LS = Store.local;
 const PARAMS = new URLSearchParams(location.search);
+const RESULT_WAIT = 25; // 結果を見てから次の日が始まるまで（秒）
 const SPEED = Math.max(1, Math.min(20, +PARAMS.get('speed') || 1)); // 動作確認用の早送り
 
 // ---------- 描画の準備 ----------
@@ -116,12 +117,12 @@ document.addEventListener('click', async (e) => {
     case 'dojoin': doJoin(); break;
     case 'copy': copyInvite(); break;
     case 'leave': leaveRoom(); break;
-    case 'start': hostStartDay(); break;
+    case 'start': if (G.isHost) hostStartDay(); else G.net?.toHost({ k: 'start' }); break;
     case 'open-shop': openMyShop(); break;
     case 'ranking': case 'rank': showRanking(); break;
     case 'close': $('modal').classList.add('hidden'); break;
     case 'ok': $('overlay').classList.add('hidden'); break;
-    case 'next': hostNextDay(); break;
+    case 'next': if (G.isHost) hostNextDay(); else G.net?.toHost({ k: 'next' }); break;
     case 'endday': hostBackToLobby(); break;
     case 'zoom': toggleTownView(); break;
     case 'nextshop': nextShop(); break;
@@ -190,6 +191,7 @@ async function startHosting(t) {
   G.isHost = true; G.town = t; G.world = new World(t);
   G.players = new Map([[G.me, { pid: G.me, name: G.name, ready: false, online: true }]]);
   G.code = t.code || makeCode();
+  t.code = G.code;
   G.phase = 'lobby';
   syncViews(true);
   placeMeOutside();
@@ -203,7 +205,14 @@ async function startHosting(t) {
     await G.net.host(G.code);
     G.online = true; $('lobby-err').textContent = '';
   } catch (e) {
-    // 同じコードが使われていたら別のコードで
+    // だれかがもうこの町を開いていたら、そこに入る
+    if (e?.type === 'unavailable-id') {
+      G.net.close(); G.net = null;
+      $('lobby-err').textContent = 'だれかがこの町を開いています。その部屋に入ります…';
+      if (await joinCode(t.code)) { $('lobby-err').textContent = ''; return; }
+      G.isHost = true; G.world = new World(t);
+    }
+    // つながらなければ別のコードで
     try { G.net.close(); G.net = new Net(); G.net.on('data', hostOnData); G.net.on('leave', hostOnLeave); G.code = makeCode(); await G.net.host(G.code); G.online = true; $('lobby-err').textContent = ''; }
     catch (e2) { G.online = false; G.net = null; $('lobby-err').textContent = 'オンラインにつながりませんでした。ひとりで遊べます。'; }
   }
@@ -216,19 +225,37 @@ async function doJoin() {
   const code = $('in-code').value.trim().toUpperCase();
   if (code.length !== 4) { $('join-err').textContent = '4文字のコードを入れてね'; return; }
   $('join-err').textContent = 'つないでいます…';
-  G.isHost = false;
+  if (await joinCode(code)) $('join-err').textContent = '';
+  else $('join-err').textContent = '入れませんでした。コードを確かめてね';
+}
+async function joinCode(code) {
+  G.isHost = false; G.world = null;
   G.net = new Net();
   G.net.on('data', clientOnData);
-  G.net.on('hostLost', () => lostConnection('町をつくった人との通信が切れました'));
+  G.net.on('hostLost', onHostLost);
   try {
     await G.net.join(code);
     G.code = code; G.online = true;
     G.net.toHost({ k: 'hello', pid: G.me, name: G.name });
-    $('join-err').textContent = '';
+    return true;
   } catch (e) {
-    $('join-err').textContent = '入れませんでした。コードを確かめてね';
     G.net.close(); G.net = null;
+    return false;
   }
+}
+// 部屋を開いていた人が抜けても、残った人が町を引きついで続ける
+async function onHostLost() {
+  if (G.phase === 'title' || !G.town || G.takingOver) return;
+  G.takingOver = true;
+  G.net?.close(); G.net = null;
+  toast('部屋を開いていた人が抜けました。この町をそのまま続けます…');
+  await new Promise((r) => setTimeout(r, 300 + Math.random() * 1700));
+  G.ppl.clear(); G.dyn = null; G.remoteAv = {};
+  const t = G.town; t.code = t.code || G.code;
+  const wasPlaying = ['prep', 'open', 'result'].includes(G.phase);
+  try { await startHosting(t); } finally { G.takingOver = false; }
+  // 自分が引きついだら、その日の準備からすぐ再開する
+  if (G.isHost && wasPlaying) hostStartDay();
 }
 function lostConnection(msg) {
   if (G.phase === 'title') return;
@@ -345,6 +372,8 @@ function hostOnData(d, conn) {
       toast(`${p.name} さんが町に来ました`);
       break;
     }
+    case 'start': if (pid && G.town.shops[pid]) hostStartDay(); break;
+    case 'next': if (pid) hostNextDay(); break;
     case 'setup': if (pid) hostSetupShop(pid, G.players.get(pid).name, d); break;
     case 'ready': if (pid) setReady(pid, !!d.ready); break;
     case 'cmd': {
@@ -487,7 +516,7 @@ function cmdFail(r) { A.sfx.error(); if (r.msg) toast(r.msg); }
 // ---------- 1日の流れ ----------
 function hostStartDay() {
   const t = G.town;
-  if (!t.shops[G.me]) return;
+  if (G.phase !== 'lobby' || !Object.values(t.shops).some((s) => !s.cpu)) return;
   // 4店にそろうまでコンピューターのお店を入れる
   let idx = 1;
   while (Object.keys(t.shops).length < 4) {
@@ -502,7 +531,7 @@ function hostStartDay() {
   for (const s of Object.values(t.shops)) s.away = null;
   hostPhase('prep');
 }
-function hostNextDay() { hostPhase('prep'); }
+function hostNextDay() { if (G.phase === 'result') hostPhase('prep'); }
 function hostBackToLobby() {
   save();
   G.phase = 'lobby';
@@ -563,6 +592,7 @@ function enterPhase(ph, t) {
 }
 function showResult(sum) {
   G.summary = sum;
+  G.resultAt = performance.now() + RESULT_WAIT * 1000 / SPEED;
   enterPhase('result');
   setHUD(false);
   $('result-title').textContent = `${sum.day}日目の結果`;
@@ -1223,6 +1253,12 @@ function loop(now) {
     if (tickSend <= 0 && G.net && G.phase === 'prep') { tickSend = 1; broadcast({ k: 'tick', t: G.phaseT }); }
   } else if (G.phase === 'prep' || G.phase === 'open') G.phaseT = Math.max(0, G.phaseT - dt);
   if (G.isHost && G.world && G.phase !== 'open') G.world.events = [];
+  // 結果画面：だれかが町にいるあいだは、少し待つと次の日が自動で始まる
+  if (G.phase === 'result' && G.resultAt) {
+    const left = (G.resultAt - now) / 1000;
+    const nb = $('btn-next'); if (nb) nb.textContent = `次の日へ（あと${Math.max(0, Math.ceil(left))}秒）`;
+    if (G.isHost && left <= 0) { G.resultAt = 0; hostNextDay(); }
+  }
 
   syncViews(false);
   updateMe(dt);

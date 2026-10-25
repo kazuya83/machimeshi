@@ -914,6 +914,16 @@ export function applyCmd(world, shop, c) {
       if (shop.menu.length < L.menu) shop.menu.push({ rid: R.id, price: R.price });
       return { ok: true, recipe: R };
     }
+    case 'autoPlace': {
+      // 空いているところに自動で置く（奥のほうから）
+      const F = FURN[c.id]; if (!F) return { ok: false };
+      if (W.money < F.cost) return { ok: false, msg: 'お金が足りません' };
+      for (let j = f.rows - 1; j >= 0; j--) for (let i = 0; i < f.cols; i++) for (const r of [0, 1]) {
+        const it = snapItem(f, { id: c.id, u: 0, v: 0, r }, i, j);
+        if (layoutOk(f, [...shop.layout, it])) { pay(F.cost); shop.layout.push(it); return { ok: true }; }
+      }
+      return { ok: false, msg: 'もう置く場所がありません。お店を広げよう！' };
+    }
     case 'place': {
       const F = FURN[c.id]; if (!F) return { ok: false };
       const it = { id: c.id, u: c.u, v: c.v, r: c.r ? 1 : 0 };

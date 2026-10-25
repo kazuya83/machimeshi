@@ -128,6 +128,7 @@ document.addEventListener('click', async (e) => {
     case 'zoom': toggleTownView(); break;
     case 'nextshop': nextShop(); break;
     case 'staff': openStaffPanel(); break;
+    case 'grow': if (G.phase === 'prep') { Prep.tab = 'grow'; $('prep').classList.remove('hidden'); $('prep-toggle').classList.add('hidden'); refreshPrep(); } else toast('お店を広げるのは準備の時間にできます'); break;
     case 'cine': G.cam.cine = !G.cam.cine; toast(G.cam.cine ? '宣伝カメラ（もう一度押すと戻る）' : 'ふつうのカメラ'); break;
     case 'gfx': toast('画質：' + GX.cycleQuality()); break;
     case 'mute': b.textContent = A.toggleMute() ? '🔇' : '🔊'; break;
@@ -512,7 +513,8 @@ function nextShop() {
   switchShop(list[(i + 1) % list.length].owner);
 }
 function afterCmd(c, r) {
-  if (['place', 'floor', 'wall', 'levelUp', 'hire', 'ad', 'dev'].includes(c.op)) A.sfx.buy(); else A.sfx.select();
+  if (['place', 'autoPlace', 'floor', 'wall', 'levelUp', 'hire', 'ad', 'dev'].includes(c.op)) A.sfx.buy();
+  if (c.op === 'autoPlace') toast(`${FURN[c.id].name}を置きました`); else A.sfx.select();
   if (c.op === 'levelUp') toast(`🎉 「${LEVELS[G.town.shops[curKey()].level].name}」になりました！`);
   if (c.op === 'moveLot') { toast('引っ越しました！'); placeMeInShop(); }
   if (c.op === 'place' || c.op === 'moveItem') { if (Prep.edit.move != null) { Prep.edit.place = null; Prep.edit.move = null; } }
@@ -1336,6 +1338,8 @@ function updateHUD(dt) {
   sb.textContent = G.me3d.sign ? `🪧 看板中${G.isHost && fol ? `（${fol}人）` : ''}` : '🪧 看板を持つ';
   $('btn-nextshop').classList.toggle('hidden', myShops().length < 2);
   $('joy').classList.toggle('hidden', !TOUCH || !['prep', 'open'].includes(G.phase) || !$('modal').classList.contains('hidden'));
+  document.body.classList.toggle('prep-open', !$('prep').classList.contains('hidden'));
+  $('btn-grow').classList.toggle('hidden', !['prep', 'open'].includes(G.phase) || !myShops().length);
   $('btn-staff').classList.toggle('hidden', !['prep', 'open'].includes(G.phase) || !myShops().length);
   // 行動ボタン
   const c = myContext();

@@ -163,3 +163,8 @@ body.hit::after { content: ''; position: fixed; inset: 0; pointer-events: none; 
 .joy i { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%; background: rgba(255,255,255,0.85); box-shadow: 0 3px 8px rgba(0,0,0,.35); }
 @media (pointer: coarse) { .hint { bottom: 168px; white-space: normal; max-width: 60%; text-align: center; } }
 @media (max-width: 600px) { .today { top: 158px; font-size: 11px; min-width: 0; } }
+.tabs button { font-size: 12px; }
+.item.grow small { display: block; margin-top: 2px; }
+.item.grow .bar { width: 70px; }
+@media (min-width: 701px) { body.prep-open .rightbar { right: calc(min(400px, 100% - 20px) + 20px); top: 64px; } }
+@media (max-width: 700px) { body.prep-open .rightbar { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; max-width: 60%; } }

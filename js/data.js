@@ -178,7 +178,7 @@ export const WALLS = [
 export const LEVELS = [
   null,
   { lv: 1, name: '屋台', W: 7, D: 7, stoves: 1, staff: 2, menu: 3, cost: 0, needRating: 0, needCust: 0 },
-  { lv: 2, name: '小さなお店', W: 10, D: 10, stoves: 2, staff: 3, menu: 5, cost: 150000, needRating: 3.0, needCust: 60 },
+  { lv: 2, name: '小さなお店', W: 10, D: 10, stoves: 2, staff: 3, menu: 5, cost: 100000, needRating: 2.8, needCust: 30 },
   { lv: 3, name: '人気店', W: 12, D: 12, stoves: 2, staff: 4, menu: 6, cost: 450000, needRating: 3.4, needCust: 250 },
   { lv: 4, name: '大きなレストラン', W: 13, D: 14, stoves: 3, staff: 6, menu: 8, cost: 1200000, needRating: 3.8, needCust: 700 },
   { lv: 5, name: '高級店', W: 13, D: 15, stoves: 4, staff: 8, menu: 10, cost: 3000000, needRating: 4.2, needCust: 1600 },

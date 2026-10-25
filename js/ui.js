@@ -62,7 +62,7 @@ export const Prep = {
   decor(s) {
     const e = this.edit;
     let h = `<p class="tip">家具をえらんで、お店の床（白いマス）をクリック／タップして置きます。R キーか「回す」で向きを変えます。置いた家具をクリックすると、動かしたり売ったりできます。</p>`;
-    h += `<div class="sec">席：${seatCount(s.layout)}席</div>`;
+    h += `<div class="sec">席：${seatCount(s.layout)}席 <button class="btn" data-tab="grow">🏗️ 席を増やす・お店を広げる</button></div>`;
     if (e.sel != null && s.layout[e.sel]) {
       const it = s.layout[e.sel];
       h += `<div class="item on"><span class="nm">えらんだ家具：${FURN[it.id].name}</span>
@@ -87,7 +87,7 @@ export const Prep = {
     const room = L.staff - s.staff.length;
     let h = `<div class="sec">はたらいている人（${s.staff.length}/${L.staff}人）</div>`;
     h += room > 0 ? `<p class="tip">🧑‍🍳 あと${room}人やとえます。下の「はたらきたい人」から選んでね。営業中も右上の 🧑‍🍳 からやとえます。</p>`
-      : `<p class="tip">いまのお店（${L.name}）ではこれ以上やとえません。${LEVELS[s.level + 1] ? `「${LEVELS[s.level + 1].name}」に広げると${LEVELS[s.level + 1].staff}人までやとえます。` : ''}<button class="btn" data-tab="shop">お店を広げる</button></p>`;
+      : `<p class="tip">いまのお店（${L.name}）ではこれ以上やとえません。${LEVELS[s.level + 1] ? `「${LEVELS[s.level + 1].name}」に広げると${LEVELS[s.level + 1].staff}人までやとえます。` : ''}<button class="btn" data-tab="grow">お店を広げる</button></p>`;
     for (const st of s.staff) h += card(st, `<button class="btn" data-c='{"op":"fire","id":"${st.id}"}'>やめてもらう</button>`);
     if (!s.staff.length) h += `<p class="note">店員がいないと、自分がいないときにお店が回りません。</p>`;
     h += `<div class="sec">はたらきたい人（毎日かわります）</div>`;
@@ -108,17 +108,35 @@ export const Prep = {
     return h;
   },
 
-  shop(s, ctx) {
+  // 拡大：席を増やす・お店を広げる
+  grow(s) {
     const L = LEVELS[s.level], N = LEVELS[s.level + 1];
+    const seats = seatCount(s.layout);
+    let h = `<div class="sec">🪑 席を増やす（いま ${seats}席）</div>
+      <p class="note">ボタンを押すと、空いているところに自動で置きます。場所を自分で決めたいときは「内装」タブから。</p>`;
+    for (const F of FURNITURE.filter((x) => x.seats)) {
+      h += `<div class="item"><span class="nm">${F.name}<small>+${F.seats}席 ・居心地 +${F.comfort}</small></span><button class="btn primary" data-c='{"op":"autoPlace","id":"${F.id}"}' ${this.money < F.cost ? 'disabled' : ''}>${yen(F.cost)}</button></div>`;
+    }
+    h += `<div class="sec">🏗️ お店を広げる（いま：${L.name}）</div>
+      <p class="note">いま：広さ ${L.W}×${L.D}m ・コンロ ${L.stoves}台 ・店員 ${L.staff}人 ・メニュー ${L.menu}品</p>`;
+    if (!N) return h + `<p class="tip">🎉 最高のお店です！</p>`;
+    const prog = (v, max) => `<span class="bar"><i style="width:${Math.min(100, v / max * 100)}%"></i></span>`;
+    const okR = s.rating >= N.needRating, okC = s.stats.totalCust >= N.needCust, okM = this.money >= N.cost;
+    h += `<div class="item grow"><span class="nm"><b>「${N.name}」に広げる</b>
+      <small>広さ ${N.W}×${N.D}m ・コンロ ${N.stoves}台 ・店員 ${N.staff}人 ・メニュー ${N.menu}品</small>
+      <small>${okR ? '✅' : '⬜'} 評判 ★${N.needRating}以上 ${prog(s.rating - 1, N.needRating - 1)} ${s.rating.toFixed(2)}</small>
+      <small>${okC ? '✅' : '⬜'} のべ来店 ${N.needCust}人 ${prog(s.stats.totalCust, N.needCust)} ${s.stats.totalCust}人${okC ? '' : `（あと${N.needCust - s.stats.totalCust}人）`}</small>
+      <small>${okM ? '✅' : '⬜'} 工事費 ${yen(N.cost)} ${prog(this.money, N.cost)}</small></span>
+      <button class="btn primary" data-c='{"op":"levelUp"}' ${okR && okC && okM ? '' : 'disabled'}>広げる</button></div>`;
+    if (!okC || !okR) h += `<p class="note">お客さんをたくさん呼んで、おいしい料理をはやく出すと条件がそろいます。看板を持って呼びこむのもおすすめ！</p>`;
+    return h;
+  },
+
+  shop(s, ctx) {
+    const L = LEVELS[s.level];
     let h = this.myShops(s, ctx);
     h += `<label class="field"><span>お店の名前</span><input id="shop-name" maxlength="12" value="${esc(s.name)}"></label><button class="btn" data-rename="1">名前を変える</button>`;
-    h += `<div class="sec">お店の大きさ：${L.name}（レベル${s.level}）</div>
-      <p class="note">広さ ${L.W}×${L.D}m ・コンロ ${L.stoves}台 ・店員 ${L.staff}人まで ・メニュー ${L.menu}品まで</p>`;
-    if (N) {
-      const okR = s.rating >= N.needRating, okC = s.stats.totalCust >= N.needCust, okM = this.money >= N.cost;
-      h += `<div class="item"><span class="nm">「${N.name}」に広げる<small>${okR ? '✅' : '❌'} 評判 ★${N.needRating}以上（いま ${s.rating.toFixed(2)}）<br>${okC ? '✅' : '❌'} のべ来店 ${N.needCust}人（いま ${s.stats.totalCust}人）<br>${okM ? '✅' : '❌'} 工事費 ${yen(N.cost)}</small></span>
-        <button class="btn primary" data-c='{"op":"levelUp"}' ${okR && okC && okM ? '' : 'disabled'}>広げる</button></div>`;
-    } else h += `<p class="note">最高のお店です！</p>`;
+    h += `<p class="note">お店の大きさ：${L.name}。広げるのは「🏗️ 拡大」タブから。</p>`;
     const free = ctx.freeLots || [];
     const lotInfo = (id) => `人通り ${'●'.repeat(Math.round(LOTS[id].traffic * 3))} ・土地代 ${yen(LOTS[id].price)} ・家賃 ${yen(LOTS[id].rent)}`;
     h += `<div class="sec">引っ越し</div><p class="note">いまの場所：空き地${s.lot + 1}（${lotInfo(s.lot)}）。駅に近いほど人通りが多く、土地代も家賃も高くなります。今の土地は7割で売れます。</p>`;

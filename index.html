@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>みんなでまちめし</title>
+<meta name="description" content="ともだちと同じ町にお店を出して、お客さんを取り合う3D飲食店経営ゲーム">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<!-- タイトル -->
+<div id="screen-title" class="screen">
+  <div class="panel">
+    <h1 class="logo"><small>みんなで</small>まちめし</h1>
+    <p class="sub">ともだちと同じ町にお店を出して、お客さんを取り合おう！</p>
+    <label class="field"><span>なまえ</span><input id="in-name" maxlength="8" autocomplete="off" spellcheck="false" placeholder="8文字まで"></label>
+    <button class="btn big" data-act="new">🏗️ 新しい町をつくる</button>
+    <button class="btn big" data-act="towns">📂 続きから（自分の町）</button>
+    <button class="btn big" data-act="gojoin">🚪 ともだちの町に入る</button>
+    <div class="btn-row">
+      <button class="btn" data-act="howto">あそびかた</button>
+      <button class="btn" data-act="google" id="btn-google">Googleでログイン</button>
+    </div>
+    <p class="note center" id="login-state"></p>
+    <p class="err" id="title-err"></p>
+  </div>
+</div>
+
+<!-- 新しい町 -->
+<div id="screen-new" class="screen">
+  <div class="panel">
+    <h2>新しい町をつくる</h2>
+    <label class="field"><span>町の名前</span><input id="in-town" maxlength="10" autocomplete="off" placeholder="まちめし町"></label>
+    <p class="note">町をつくると部屋コードが出ます。ともだちに教えると同じ町に入れます。ひとりでも遊べます（空いたところはコンピューターのお店が入ります）。</p>
+    <button class="btn big primary" data-act="create">町をつくる</button>
+    <button class="btn" data-act="back">もどる</button>
+  </div>
+</div>
+
+<!-- 町の一覧 -->
+<div id="screen-towns" class="screen">
+  <div class="panel wide">
+    <h2>自分の町</h2>
+    <div id="town-list" class="town-list"></div>
+    <button class="btn" data-act="back">もどる</button>
+  </div>
+</div>
+
+<!-- 部屋に入る -->
+<div id="screen-join" class="screen">
+  <div class="panel">
+    <h2>ともだちの町に入る</h2>
+    <label class="field"><span>部屋コード</span><input id="in-code" maxlength="4" autocomplete="off" spellcheck="false" placeholder="ABCD"></label>
+    <button class="btn big primary" data-act="dojoin">入る！</button>
+    <button class="btn" data-act="back">もどる</button>
+    <p class="note">町をつくった人から4文字のコードを教えてもらってね</p>
+    <p class="err" id="join-err"></p>
+  </div>
+</div>
+
+<!-- あそびかた -->
+<div id="screen-howto" class="screen">
+  <div class="panel wide scroll">
+    <h2>あそびかた</h2>
+    <ol class="howto">
+      <li><b>準備の時間（3分）</b>：メニュー・値段・内装・店員・宣伝を決めます。みんなが「準備OK」を押すと早く始まります。</li>
+      <li><b>営業の時間（7分）</b>：お客さんが町を歩いてお店を選びます。自分のキャラで<b>料理を作る → 受け取り口から取る → 席へ運ぶ → 片づける</b>を手伝うと、お店がどんどん回ります。</li>
+      <li><b>結果発表</b>：売上・来店数・評判のランキング。みんなが頑張るほど<b>町がにぎわって</b>、外の町からもお客さんが来ます。</li>
+    </ol>
+    <table class="keys-table">
+      <tr><th>WASD / 矢印</th><td>歩く</td></tr>
+      <tr><th>Space / E</th><td>近くのものを使う（作る・取る・運ぶ・片づける）</td></tr>
+      <tr><th>クリック・タップ</th><td>その場所へ歩く／コンロ・料理・席をタップするとそこでやる</td></tr>
+      <tr><th>ホイール・ピンチ</th><td>ズーム。T で町全体を見る</td></tr>
+      <tr><th>Q</th><td>宣伝用カメラ（町をぐるっと回る）</td></tr>
+      <tr><th>G / M</th><td>画質の切り替え / 音のオン・オフ</td></tr>
+    </table>
+    <p class="tip">お客さんの種類：学生（安いのが好き）・会社員（速さ重視）・グルメ（味と評判）・家族連れ（広さ・見た目）・のんびりさん（内装の居心地）・観光客（評判）。</p>
+    <button class="btn" data-act="back">もどる</button>
+  </div>
+</div>
+
+<!-- ロビー -->
+<div id="screen-lobby" class="screen">
+  <div class="panel wide scroll">
+    <div class="lobby-head">
+      <h2 id="lobby-title">町</h2>
+      <div class="roomcode" id="lobby-code-box">部屋コード <b id="lobby-code">----</b> <button class="btn small" data-act="copy">招待URLをコピー</button></div>
+    </div>
+    <p class="note" id="lobby-town"></p>
+    <div class="cols">
+      <div class="col" id="setup-box">
+        <h3>自分のお店</h3>
+        <div id="my-shop-box"></div>
+      </div>
+      <div class="col">
+        <h3>この町のお店 <span id="pcount"></span></h3>
+        <ul id="player-list"></ul>
+        <button class="btn" data-act="ranking">🏆 ランキング・トロフィー</button>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn big primary host-only" data-act="start" id="btn-start">営業日をはじめる！</button>
+      <p class="note guest-only" id="guest-wait">町をつくった人がはじめるのを待っています…</p>
+      <button class="btn" data-act="leave">町を出る</button>
+    </div>
+    <p class="err" id="lobby-err"></p>
+  </div>
+</div>
+
+<!-- ゲーム中の表示 -->
+<div id="hud" class="hidden">
+  <div class="topbar">
+    <div class="pill" id="hud-day">1日目</div>
+    <div class="pill" id="hud-phase">準備</div>
+    <div class="pill clock" id="hud-clock">11:00</div>
+    <div class="pill" id="hud-timer">3:00</div>
+    <div class="pill money" id="hud-money">¥0</div>
+    <div class="pill" id="hud-rating">★★★</div>
+    <div class="pill buzz" id="hud-buzz"><span>町</span><i><b id="hud-buzz-bar"></b></i><em id="hud-buzz-name"></em></div>
+  </div>
+  <div class="rightbar">
+    <button class="icon" data-act="zoom" title="町を見る（T）">🗺️</button>
+    <button class="icon" data-act="cine" title="宣伝カメラ（Q）">🎬</button>
+    <button class="icon" data-act="rank" title="ランキング">🏆</button>
+    <button class="icon" data-act="gfx" title="画質（G）">✨</button>
+    <button class="icon" data-act="mute" title="音（M）">🔊</button>
+    <button class="icon" data-act="menu" title="メニュー">☰</button>
+  </div>
+  <div id="today-box" class="today"></div>
+  <div id="act-btn" class="act-btn hidden">作る</div>
+  <div id="hint" class="hint"></div>
+  <div id="toast" class="toast"></div>
+</div>
+
+<!-- 準備のパネル -->
+<div id="prep" class="prep hidden">
+  <div class="tabs" id="prep-tabs">
+    <button data-tab="menu" class="on">🍽️ メニュー</button>
+    <button data-tab="decor">🪑 内装</button>
+    <button data-tab="staff">🧑‍🍳 店員</button>
+    <button data-tab="ads">📣 宣伝</button>
+    <button data-tab="shop">🏪 お店</button>
+  </div>
+  <div class="prep-body" id="prep-body"></div>
+  <div class="prep-foot">
+    <span id="prep-money"></span>
+    <button class="btn primary" id="btn-ready">準備OK！</button>
+  </div>
+</div>
+<button id="prep-toggle" class="prep-toggle hidden">◀ 準備</button>
+
+<!-- 結果 -->
+<div id="screen-result" class="screen">
+  <div class="panel wide scroll">
+    <h2 id="result-title">1日目の結果</h2>
+    <div id="result-body"></div>
+    <div class="btn-row">
+      <button class="btn big primary host-only" data-act="next">次の日へ</button>
+      <button class="btn host-only" data-act="endday">今日はここまで（保存して終わる）</button>
+      <p class="note guest-only">町をつくった人が次の日をはじめるのを待っています…</p>
+    </div>
+    <p class="note center" id="save-state"></p>
+  </div>
+</div>
+
+<!-- ランキング -->
+<div id="modal" class="modal hidden">
+  <div class="panel wide scroll">
+    <div id="modal-body"></div>
+    <button class="btn" data-act="close">とじる</button>
+  </div>
+</div>
+
+<div id="overlay" class="modal hidden"><div class="panel"><div id="overlay-text"></div><button class="btn primary" data-act="ok">OK</button></div></div>
+<div id="loading" class="loading">よみこみ中…</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }
+</script>
+<script src="vendor/peerjs.min.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -738,6 +738,7 @@ export class World {
 
   // ---------- プレイヤーの行動 ----------
   setAvatar(owner, x, z, rot, moving, sign) {
+    if (!this.shops[owner] || this.shops[owner].closing) return null;
     let av = this.avatars.get(owner);
     if (!av) { av = { x, z, rot, carry: null, cook: null }; this.avatars.set(owner, av); }
     av.x = x; av.z = z; av.rot = rot; av.moving = moving;
@@ -844,6 +845,20 @@ export class World {
     }
     const av = this.avatars.get(owner); if (av) av.cook = null;
     this.reflowQueue(rt);
+  }
+  // 営業中に閉店：お客さんはお金を払わずに帰り、店員もいなくなる（お店の記録は日の終わりに消える）
+  closeNow(owner) {
+    const rt = this.rt.get(owner); if (!rt) return;
+    for (const p of [...this.people.values()]) {
+      if (p.shop !== owner) continue;
+      if (p.kind === 'staff') { this.removePerson(p.id); continue; }
+      this.emote(p, '❓', 2);
+      this.leave(p, false);
+    }
+    rt.orders = []; rt.queue = []; rt.staffP = [];
+    rt.stoves.fill(null); rt.slots.fill(null);
+    for (const s of rt.seats) { s.occ = null; s.dirty = false; s.cleaner = null; }
+    this.fx({ k: 'closed', shop: owner });
   }
   // ---------- うんこ ----------
   addPoop(by, x, z) {
@@ -1083,7 +1098,7 @@ export function openBranch(world, pid, req) {
 export function bankrupt(world, pid) {
   for (const s of shopsOf(world.shops, pid)) {
     world.avatars.delete(s.owner);
-    if (world.phase === 'open') s.closing = true;
+    if (world.phase === 'open') { s.closing = true; world.closeNow(s.owner); }
     else { delete world.shops[s.owner]; world.rebuild(s.owner); }
   }
 }

@@ -948,7 +948,7 @@ function updateGhost() {
 
 // その場で「使う」
 function myContext() {
-  if (G.phase !== 'open' || !G.town?.shops[curKey()]) return null;
+  if (G.phase !== 'open' || !myShops().length) return null;
   if (G.isHost) return G.world.contextAt(curKey());
   const v = views.get(curKey()); const dyn = G.dyn?.shops?.[curKey()];
   if (!v || !dyn) return null;

@@ -477,12 +477,17 @@ export class World {
   // プレイヤーがぶつかるとお客さんを押せる。お店の区画まで押しこむとそのまま入店
   pushCustomers() {
     for (const av of this.avatars.values()) {
+      // 押している向きに、お客さんもいっしょに動かす（横にすべって抜けないように）
+      const mx = av.x - (av.lx ?? av.x), mz = av.z - (av.lz ?? av.z);
+      av.lx = av.x; av.lz = av.z;
+      const mv = Math.hypot(mx, mz) < 1 ? Math.hypot(mx, mz) : 0;
       for (const p of this.people.values()) {
         if (p.kind !== 'cust' || !PUSHABLE.has(p.state)) continue;
         const dx = p.x - av.x, dz = p.z - av.z, d = Math.hypot(dx, dz);
         if (d >= PUSH_R || d < 1e-4) continue;
         const k = PUSH_R - d;
         p.x += dx / d * k; p.z += dz / d * k;
+        if (mv > 1e-4 && dx * mx + dz * mz > 0) { p.x += mx; p.z += mz; }
         if (p.state !== 'pushed') { p.before = p.state; p.state = 'pushed'; p.path = []; this.emote(p, '💦', 1); }
         p.pushT = 0; p.rot = Math.atan2(-dx, -dz);
         const lot = LOTS.find((L) => Math.abs(p.x - L.x) < 7 && p.z * L.side > 6.6);

@@ -1619,5 +1619,5 @@ function orderRid(owner, oid) {
 }
 
 // デバッグ・テスト用
-window.__mm = { G, Store, views, camera, regionAt, canMove, joinCode, resumeLast, get town3d() { return town3d; } };
+window.__mm = { G, GX, walkTo, setAuto, toggleSign, dropPoop, doAct, Store, views, camera, regionAt, canMove, joinCode, resumeLast, get town3d() { return town3d; } };
 void recipeOf; void seatsOf; void GFX; void GFX_NAMES;

@@ -136,3 +136,19 @@ table.res .rk { color: #e2572b; font-weight: 800; }
 .subtabs { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
 .subtabs button { border: 0; border-radius: 10px; padding: 6px 12px; background: #f1e3cc; font-weight: 800; }
 .subtabs button.on { background: #e2572b; color: #fff; }
+.lotmap { margin: 6px 0 8px; }
+.lotrow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.lotrow .lot { padding: 5px 4px; font-size: 11px; text-align: center; line-height: 1.3; }
+.lotrow .lot b { display: block; font-size: 12px; }
+.lotrow .lot small { display: block; font-size: 10px; }
+.lot.taken { background: #eee7dd; border-color: #d6cbbb; color: #9a8e80; cursor: default; }
+.lotroad { margin: 4px 0; padding: 3px 8px; background: #6f6a64; color: #fff; border-radius: 6px; font-size: 11px; letter-spacing: 2px; }
+.item.cur { outline: 2px solid #e2572b; background: #fff6ee; }
+.auto-btn { position: absolute; right: 12px; bottom: 150px; pointer-events: auto; padding: 10px 14px; border-radius: 999px; border: 2px solid #fff; background: rgba(60,50,40,.75); color: #fff; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+.auto-btn.on { background: #2f9e5b; }
+@media (max-width: 520px) { .lotrow { grid-template-columns: repeat(3, 1fr); } }
+.lotrow .lot i { display: block; font-style: normal; color: #e2572b; font-size: 10px; letter-spacing: -1px; }
+.lotrow .lot em { display: block; font-style: normal; font-weight: 800; font-size: 12px; white-space: nowrap; }
+.lotrow .lot small { white-space: nowrap; }
+.sign-btn { bottom: 196px; }
+.sign-btn.on { background: #d9822b; }

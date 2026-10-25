@@ -145,7 +145,7 @@ export class Town {
     }
     const rope = new THREE.Mesh(new THREE.BoxGeometry(12.6, 0.04, 0.04), new THREE.MeshStandardMaterial({ color: 0xf2c14e }));
     rope.position.set(L.x, 1.0, front); g.add(rope);
-    const sign = textSprite(`空き地 ${L.id + 1}`, { size: 44, bg: 'rgba(255,255,255,0.92)', color: '#333', h: 0.8 });
+    const sign = textSprite(`売地 ${L.id + 1}  ¥${L.price.toLocaleString()}`, { size: 44, bg: 'rgba(255,255,255,0.92)', color: '#333', h: 0.8 });
     sign.position.set(L.x, 1.9, front); g.add(sign);
     this.g.add(g);
     return g;

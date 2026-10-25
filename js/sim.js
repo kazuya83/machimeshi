@@ -1,13 +1,14 @@
 // 町の動き（お客さん・店員・注文・売上・評判）。部屋を作った人のブラウザだけが計算する
 import {
   GENRE, GENRES, RECIPE, RECIPES, CUSTOMERS, customerMix, crowdCurve, FURN, FURNITURE, FLOORS, WALLS, LEVELS, LOTS,
-  ADS, AD, TROPHIES, makeStaffCandidate, makeCustomRecipe, CUSTOM_DEV_COST, MOVE_COST, OPEN_TIME, OPEN_HOUR, CLOSE_HOUR,
+  ADS, AD, TROPHIES, makeStaffCandidate, makeCustomRecipe, CUSTOM_DEV_COST, moveCost, START_CAPITAL, BRANCH_FEE, MAX_SHOPS, OPEN_TIME, OPEN_HOUR, CLOSE_HOUR,
   CPU_NAMES, KITCHEN_DEPTH,
 } from './data.js';
 import { frame, seatsOf, queueSpot, layoutOk, snapItem, cellsOf, NODES, findPath, nearestNode, ENTRANCES, LOT_NODE } from './geo.js';
 import { rng, clamp, pickWeighted, uid } from './util.js';
 
 const TYPES = Object.keys(CUSTOMERS);
+const SIGN_R = 5.5, SIGN_MAX = 6; // 看板に気づく距離・ついて来る人数
 export const POSE = { walk: 0, stand: 1, sit: 2, cook: 3, carry: 4, wave: 5 };
 const PLAYER_COOK = 2.0; // 自分で作ると速い
 const MAX_PEOPLE = 170;
@@ -33,12 +34,13 @@ export function starterLayout(shop) {
   return items;
 }
 
-export function newShop({ owner, ownerName, cpu, name, genre, lot, color }) {
+export function newShop({ owner, player, ownerName, cpu, name, genre, lot, color, branch }) {
   const g = GENRE[genre] || GENRES[0];
   const rec = RECIPES.filter((r) => r.genre === g.id).slice(0, 3);
   const shop = {
-    owner, ownerName: ownerName || '', cpu: !!cpu, name: name || g.name, genre: g.id, lot, level: 1, color: color || 0,
-    money: 80000, rating: 3.0, reviews: 0,
+    owner, player: player || owner, ownerName: ownerName || '', cpu: !!cpu, name: name || g.name, genre: g.id, lot, level: 1, color: color || 0,
+    // 資本金から土地代を払った残りが所持金（2店目からは1つのお財布を使う）
+    money: cpu ? 80000 : branch ? 0 : START_CAPITAL - LOTS[lot].price, rating: 3.0, reviews: 0,
     menu: rec.map((r) => ({ rid: r.id, price: r.price })), customs: [],
     layout: [], floor: 'wood', wall: 'cream', perm: {},
     staff: [], cands: [], ads: {},
@@ -46,9 +48,16 @@ export function newShop({ owner, ownerName, cpu, name, genre, lot, color }) {
     trophies: [], lastSeen: Date.now(), away: null,
   };
   shop.layout = starterLayout(shop);
-  shop.staff.push({ ...makeStaffCandidate(rng(Date.now() + lot), 'all'), skill: 2, speed: 3, charm: 2, wage: 3500 });
+  const r = rng(Date.now() + lot);
+  shop.staff.push({ ...makeStaffCandidate(r, 'all'), skill: 2, speed: 3, charm: 2, wage: 3500 });
+  shop.cands = [makeStaffCandidate(r, 'cook'), makeStaffCandidate(r, 'hall'), makeStaffCandidate(r)];
   return shop;
 }
+
+// お金はプレイヤーごとに1つ（1店目にまとめてある）
+export const playerOf = (shop) => shop.player || shop.owner;
+export function walletOf(shops, shop) { return shops[playerOf(shop)] || shop; }
+export function shopsOf(shops, pid) { return Object.values(shops).filter((s) => !s.cpu && playerOf(s) === pid); }
 
 export function recipeOf(shop, rid) { return RECIPE[rid] || (shop.customs || []).find((c) => c.id === rid) || null; }
 export function freeLots(town) {
@@ -149,7 +158,7 @@ export class World {
       const td = rt.today;
       const wages = shop.staff.reduce((a, s) => a + s.wage, 0);
       const rent = LOTS[shop.lot].rent * (0.2 + shop.level * 0.15);
-      shop.money -= wages + rent;
+      walletOf(this.shops, shop).money -= wages + rent;
       const profit = td.sales - td.cost - wages - rent - (td.adCost || 0);
       const st = shop.stats;
       st.totalCust += td.cust; st.totalSales += td.sales; st.days++;
@@ -163,7 +172,7 @@ export class World {
       results.push({
         owner: o, name: shop.name, ownerName: shop.ownerName, cpu: shop.cpu, genre: shop.genre, color: shop.color,
         sales: td.sales, cust: td.cust, angry: td.angry, cost: td.cost, wages, rent, adCost: td.adCost || 0, profit,
-        rating: shop.rating, review: td.revN ? td.revSum / td.revN : 0, money: shop.money, newTrophies: newT,
+        rating: shop.rating, review: td.revN ? td.revSum / td.revN : 0, money: walletOf(this.shops, shop).money, player: playerOf(shop), newTrophies: newT,
         bestDish: best ? recipeOf(shop, best)?.name : null, bestDishN: bn,
       });
       dayCust += td.cust; ratingSum += shop.rating; n++;
@@ -361,7 +370,7 @@ export class World {
     if (!best) return this.leave(p, false);
     const o = { id: this.nextId++, cust: p.id, rid: best.R.id, price: best.price, state: 'wait', prog: 0, stove: null, slot: null, by: null, q: 0, seat: p.seat, t0: this.t };
     rt.orders.push(o);
-    shop.money -= best.R.cost;
+    walletOf(this.shops, shop).money -= best.R.cost;
     rt.today.cost += best.R.cost;
     p.state = 'waitFood'; p.waitT = 0; p.order = o.id;
     this.fx({ k: 'order', shop: p.shop, rid: o.rid, x: p.x, z: p.z });
@@ -391,7 +400,7 @@ export class World {
     const k = Math.max(0.02, 1 / (shop.reviews + 8));
     shop.rating = clamp(shop.rating + (review - shop.rating) * k, 1, 5);
     shop.reviews++;
-    shop.money += o.price;
+    walletOf(this.shops, shop).money += o.price;
     rt.today.sales += o.price; rt.today.cust++; rt.today.revSum += review; rt.today.revN++;
     rt.today.dishes[o.rid] = (rt.today.dishes[o.rid] || 0) + 1;
     rt.orders = rt.orders.filter((x) => x !== o);
@@ -428,10 +437,45 @@ export class World {
       }
     }
     this.runLater(dt);
+    this.signboards(dt);
     for (const p of [...this.people.values()]) this.step(p, dt);
     for (const [o, rt] of this.rt) this.stepShop(o, rt, dt);
     if (this.t >= OPEN_TIME) return 'end';
     return null;
+  }
+  // 看板を持って歩くプレイヤーに、近くのお客さんがついて行く
+  signboards(dt) {
+    for (const [sid, av] of this.avatars) {
+      if (!av.sign || !this.shops[sid]) continue;
+      let n = 0;
+      for (const p of this.people.values()) if (p.state === 'follow' && p.follow === sid) n++;
+      if (n >= SIGN_MAX) continue;
+      for (const p of this.people.values()) {
+        if (p.kind !== 'cust' || p.noSign || (p.state !== 'pass' && p.state !== 'go') || p.target === sid) continue;
+        if (Math.hypot(p.x - av.x, p.z - av.z) > SIGN_R) continue;
+        // おなかがすいている人ほどついて来る。行き先が決まっている人は少しだけ
+        const chance = (p.state === 'go' ? 0.12 : p.hungry ? 0.6 : 0.22) * dt;
+        if (this.rnd() < chance) {
+          p.state = 'follow'; p.follow = sid; p.followT = 0; p.followN = n; p.path = []; p.target = null;
+          this.emote(p, '👀', 1.5);
+          if (++n >= SIGN_MAX) break;
+        } else if (this.rnd() < dt * 0.5) p.noSign = p.noSign || this.rnd() < 0.15; // 興味がない人もいる
+      }
+    }
+  }
+  stepFollow(p, dt) {
+    const av = this.avatars.get(p.follow), shop = this.shops[p.follow];
+    p.followT += dt;
+    if (!av || !av.sign || !shop || p.followT > 100) { p.noSign = true; p.follow = null; return this.resume(p); }
+    // お店の前まで来たら入る
+    const n = NODES[LOT_NODE[shop.lot]];
+    if (Math.hypot(p.x - n.x, p.z - n.z) < 3.2) { p.noSign = true; p.follow = null; return this.arriveShop(p, shop.owner); }
+    const d = Math.hypot(av.x - p.x, av.z - p.z), keep = 1.3 + (p.followN || 0) * 0.55;
+    if (d > keep) {
+      const sp = Math.min(d - keep, p.speed * 1.35 * dt);
+      p.x += (av.x - p.x) / d * sp; p.z += (av.z - p.z) / d * sp;
+      p.rot = Math.atan2(av.x - p.x, av.z - p.z); p.pose = POSE.walk;
+    } else p.pose = POSE.stand;
   }
   runLater(dt) {
     if (!this.later) return;
@@ -478,6 +522,7 @@ export class World {
     if (p.kind !== 'cust') return;
     const T = CUSTOMERS[p.type];
     switch (p.state) {
+      case 'follow': this.stepFollow(p, dt); break;
       case 'pass': case 'go': case 'leave':
         p.pose = POSE.walk;
         if (this.walk(p, dt)) {
@@ -651,10 +696,12 @@ export class World {
   }
 
   // ---------- プレイヤーの行動 ----------
-  setAvatar(owner, x, z, rot, moving) {
+  setAvatar(owner, x, z, rot, moving, sign) {
     let av = this.avatars.get(owner);
     if (!av) { av = { x, z, rot, carry: null, cook: null }; this.avatars.set(owner, av); }
     av.x = x; av.z = z; av.rot = rot; av.moving = moving;
+    if (sign !== undefined) av.sign = !!sign;
+    if (av.carry != null || av.cook != null) av.sign = false;
     return av;
   }
   // その場でできること（近くのもの）を探す
@@ -773,7 +820,8 @@ function setTimeoutish(w, t, fn) { (w.later ||= []).push({ t, fn }); }
 export function applyCmd(world, shop, c) {
   const L = LEVELS[shop.level];
   const f = frame(shop);
-  const pay = (n) => { if (shop.money < n) return false; shop.money -= n; return true; };
+  const W = world ? walletOf(world.shops, shop) : shop;
+  const pay = (n) => { if (W.money < n) return false; W.money -= n; return true; };
   switch (c.op) {
     case 'rename': shop.name = String(c.name || '').slice(0, 12) || shop.name; return { ok: true };
     case 'price': {
@@ -812,7 +860,7 @@ export function applyCmd(world, shop, c) {
     }
     case 'sell': {
       const it = shop.layout[c.idx]; if (!it) return { ok: false };
-      shop.layout.splice(c.idx, 1); shop.money += Math.round(FURN[it.id].cost / 2); return { ok: true };
+      shop.layout.splice(c.idx, 1); W.money += Math.round(FURN[it.id].cost / 2); return { ok: true };
     }
     case 'floor': {
       const F = FLOORS.find((x) => x.id === c.id); if (!F || shop.floor === F.id) return { ok: false };
@@ -849,7 +897,7 @@ export function applyCmd(world, shop, c) {
       const nf = frame(shop); const keep = [];
       for (const it of shop.layout) {
         const c2 = cellsOf(nf, it); const sn = snapItem(nf, it, c2.i0, c2.j0);
-        if (layoutOk(nf, [...keep, sn])) keep.push(sn); else shop.money += Math.round(FURN[it.id].cost / 2);
+        if (layoutOk(nf, [...keep, sn])) keep.push(sn); else W.money += Math.round(FURN[it.id].cost / 2);
       }
       shop.layout = keep;
       return { ok: true };
@@ -857,11 +905,37 @@ export function applyCmd(world, shop, c) {
     case 'moveLot': {
       const free = world ? freeLots(world.town) : [];
       if (!free.includes(c.lot)) return { ok: false, msg: 'その場所は空いていません' };
-      if (!pay(MOVE_COST)) return { ok: false, msg: 'お金が足りません' };
+      if (!pay(moveCost(shop.lot, c.lot))) return { ok: false, msg: 'お金が足りません' };
       shop.lot = c.lot; return { ok: true };
     }
   }
   return { ok: false };
+}
+
+// ---------- 2店目・3店目 ----------
+// 町の空き地を早い者勝ちで買う。お金は1店目のお財布から
+export function openBranch(world, pid, req) {
+  const shops = world.shops, main = shops[pid];
+  if (!main) return { ok: false, msg: 'まず1店目を出してください' };
+  const mine = shopsOf(shops, pid);
+  if (mine.length >= MAX_SHOPS) return { ok: false, msg: `お店は${MAX_SHOPS}店までです` };
+  if (!freeLots(world.town).includes(req.lot)) return { ok: false, msg: 'その場所はもう埋まっています' };
+  const cost = LOTS[req.lot].price + BRANCH_FEE;
+  if (main.money < cost) return { ok: false, msg: 'お金が足りません' };
+  let n = 2; while (shops[`${pid}~${n}`]) n++;
+  const shop = newShop({ owner: `${pid}~${n}`, player: pid, ownerName: main.ownerName, name: req.name, genre: req.genre, lot: req.lot, color: main.color, branch: true });
+  main.money -= cost;
+  world.addShop(shop);
+  return { ok: true, sid: shop.owner };
+}
+// 2店目以降をたたむ（土地は7割で売れる）
+export function closeBranch(world, pid, sid) {
+  const shop = world.shops[sid];
+  if (!shop || sid === pid || playerOf(shop) !== pid) return { ok: false, msg: '1店目はたためません' };
+  world.shops[pid].money += Math.round(LOTS[shop.lot].price * 0.7);
+  delete world.shops[sid];
+  world.rebuild(sid);
+  return { ok: true };
 }
 
 // ---------- コンピューターのお店の作戦 ----------

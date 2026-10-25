@@ -5,7 +5,7 @@ import { createGraphics, GFX_NAMES, GFX, textSprite } from './graphics.js';
 import { Town } from './town.js';
 import { ShopView } from './shopview.js';
 import { Crowd } from './people.js';
-import { World, newTown, newShop, makeCpuShop, freeLots, awayEarnings, contextOf, POSE, recipeOf } from './sim.js';
+import { World, newTown, newShop, makeCpuShop, freeLots, awayEarnings, contextOf, POSE, recipeOf, playerOf, walletOf, shopsOf, openBranch, closeBranch } from './sim.js';
 import { frame, layoutOk, snapItem, seatsOf, furnSize } from './geo.js';
 import { Net, makeCode } from './net.js';
 import { Store } from './save.js';
@@ -43,7 +43,17 @@ const G = {
   reqId: 1, pending: new Map(),
   today: {},
   lastSave: '',
+  cur: null, // いま自分が立っているお店（2店目・3店目もある）
+  auto: LS.get('mm-auto', '0') === '1', autoT: 0, autoPause: 0,
 };
+// 自分のお店の一覧と、いま働いているお店
+function myShops() { return G.town ? shopsOf(G.town.shops, G.me) : []; }
+function curKey() {
+  const sh = G.town?.shops; if (!sh) return G.me;
+  if (G.cur && sh[G.cur] && !sh[G.cur].cpu && playerOf(sh[G.cur]) === G.me) return G.cur;
+  return sh[G.me] ? G.me : (myShops()[0]?.owner ?? G.me);
+}
+function myWallet() { const s = G.town?.shops[curKey()]; return s ? walletOf(G.town.shops, s) : null; }
 
 // ---------- 画面 ----------
 function show(name) {
@@ -114,6 +124,7 @@ document.addEventListener('click', async (e) => {
     case 'next': hostNextDay(); break;
     case 'endday': hostBackToLobby(); break;
     case 'zoom': toggleTownView(); break;
+    case 'nextshop': nextShop(); break;
     case 'cine': G.cam.cine = !G.cam.cine; toast(G.cam.cine ? '宣伝カメラ（もう一度押すと戻る）' : 'ふつうのカメラ'); break;
     case 'gfx': toast('画質：' + GX.cycleQuality()); break;
     case 'mute': b.textContent = A.toggleMute() ? '🔇' : '🔊'; break;
@@ -169,7 +180,7 @@ async function hostOpenTown(id) {
   for (const s of Object.values(t.shops)) {
     s.lastSeen = t.lastPlayed;
     const e = awayEarnings(t, s, now);
-    if (e) { s.money += e.earn; s.stats.totalCust += e.cust; s.stats.totalSales += e.earn; s.away = e; }
+    if (e) { walletOf(t.shops, s).money += e.earn; s.stats.totalCust += e.cust; s.stats.totalSales += e.earn; s.away = e; }
   }
   t.lastPlayed = now;
   await startHosting(t);
@@ -252,13 +263,12 @@ function renderLobby() {
   document.querySelectorAll('#screen-lobby .host-only, #screen-result .host-only').forEach((e) => e.classList.toggle('hidden', !G.isHost));
   document.querySelectorAll('#screen-lobby .guest-only, #screen-result .guest-only').forEach((e) => e.classList.toggle('hidden', G.isHost));
   const mine = t.shops[G.me];
-  const free = freeLots(t);
   const active = document.activeElement?.id === 'in-shop';
-  if (!active) $('my-shop-box').innerHTML = renderSetup(free, !!mine, mine);
+  if (!active) $('my-shop-box').innerHTML = renderSetup(t, G.me);
   const list = [];
   const shops = Object.values(t.shops);
   for (const s of shops) {
-    const p = G.players.get(s.owner);
+    const p = G.players.get(playerOf(s));
     const col = s.cpu ? '#8a99a8' : '#' + PLAYER_COLORS[s.color % 4].toString(16).padStart(6, '0');
     list.push(`<li><span class="dot" style="background:${col}"></span><span class="pn">${GENRE[s.genre].icon} ${esc(s.name)}<br><small>${s.cpu ? 'コンピューター' : esc(s.ownerName)} ・${LEVELS[s.level].name} ・★${s.rating.toFixed(2)}</small></span>
       <span class="tag ${s.cpu ? 'cpu' : p?.online ? 'on' : ''}">${s.cpu ? 'CPU' : p?.online ? (p.ready ? '準備OK' : 'いる') : 'おまかせ営業'}</span></li>`);
@@ -283,22 +293,20 @@ function hostSetupShop(pid, pname, req) {
   const t = G.town;
   if (t.shops[pid]) return;
   const humans = Object.values(t.shops).filter((s) => !s.cpu);
-  if (humans.length >= MAX_PLAYERS) { sendTo(pid, { k: 'err', msg: 'この町はもういっぱいです（4店まで）' }); return; }
-  let lot = req.lot;
-  if (!freeLots(t).includes(lot)) lot = freeLots(t)[0];
+  if (new Set(humans.map(playerOf)).size >= MAX_PLAYERS) { sendTo(pid, { k: 'err', msg: 'この町はもういっぱいです（4人まで）' }); return; }
+  // 場所は早い者勝ち
+  const lot = req.lot;
+  if (!freeLots(t).includes(lot)) { sendTo(pid, { k: 'err', msg: 'その場所はひと足先に埋まってしまいました。ほかの場所を選んでね' }); broadcastTown(); return; }
   // コンピューターのお店がいたら1つ町を出てもらう
   const cpus = Object.values(t.shops).filter((s) => s.cpu);
   if (Object.keys(t.shops).length >= 4 && cpus.length) {
     const out = cpus.sort((a, b) => a.rating - b.rating)[0];
     delete t.shops[out.owner]; G.world.rebuild(out.owner);
-    if (lot == null) lot = out.lot;
   }
-  if (lot == null) return;
   const used = new Set(humans.map((s) => s.color));
   let color = 0; while (used.has(color)) color++;
   const shop = newShop({ owner: pid, ownerName: pname, name: req.name, genre: req.genre, lot, color });
   G.world.addShop(shop);
-  if (G.phase === 'prep') G.world.startPrepShop?.(pid);
   bumpShop(pid);
   broadcastTown();
   save();
@@ -341,20 +349,43 @@ function hostOnData(d, conn) {
     case 'ready': if (pid) setReady(pid, !!d.ready); break;
     case 'cmd': {
       if (!pid || G.phase !== 'prep') { G.net.send(conn, { k: 'cmdres', id: d.id, ok: false, msg: 'いまは変えられません' }); return; }
-      const r = G.world.cmd(pid, d.c);
+      const sid = sidOf(pid, d.sid);
+      const r = G.world.cmd(sid, d.c);
       G.net.send(conn, { k: 'cmdres', id: d.id, ...r });
-      if (r.ok) { broadcastShop(pid); if (d.c.op === 'moveLot') broadcastTown(); }
+      if (r.ok) hostAfterCmd(pid, sid, d.c);
       break;
     }
-    case 'pos': if (pid && G.world) G.world.setAvatar(pid, d.x, d.z, d.rot, d.m); break;
-    case 'act': if (pid && G.world) { if (d.x != null) G.world.setAvatar(pid, d.x, d.z, d.rot, false); G.world.act(pid); } break;
+    case 'branch': case 'closeShop': {
+      if (!pid || G.phase !== 'prep') { G.net.send(conn, { k: 'cmdres', id: d.id, ok: false, msg: '準備の時間にできます' }); return; }
+      const r = d.k === 'branch' ? openBranch(G.world, pid, d) : closeBranch(G.world, pid, d.sid);
+      G.net.send(conn, { k: 'cmdres', id: d.id, ...r });
+      if (r.ok) { broadcastTown(); save(); }
+      break;
+    }
+    case 'pos': if (pid && G.world) hostAvatar(pid, sidOf(pid, d.sid), d.x, d.z, d.rot, d.m, !!d.sg); break;
+    case 'act': if (pid && G.world) { const sid = sidOf(pid, d.sid); if (d.x != null) hostAvatar(pid, sid, d.x, d.z, d.rot, false); G.world.act(sid); } break;
   }
+}
+// 子が送ってきたお店が本当にその人のものか確かめる
+function sidOf(pid, sid) {
+  const s = sid && G.town.shops[sid];
+  return s && !s.cpu && playerOf(s) === pid ? sid : pid;
+}
+// 自分のキャラは1つだけ：別のお店に移ったら前のお店からは消す
+function hostAvatar(pid, sid, x, z, rot, m, sign) {
+  for (const s of shopsOf(G.town.shops, pid)) if (s.owner !== sid) G.world.avatars.delete(s.owner);
+  G.world.setAvatar(sid, x, z, rot, m, sign);
+}
+function hostAfterCmd(pid, sid, c) {
+  broadcastShop(sid);
+  if (sid !== pid) broadcastShop(pid); // お財布は1店目にある
+  if (c.op === 'moveLot') broadcastTown();
 }
 function hostOnLeave(conn) {
   const p = [...G.players.values()].find((x) => x.conn === conn);
   if (!p) return;
   p.online = false; p.conn = null; p.ready = false;
-  G.world?.avatars.delete(p.pid);
+  if (G.town) for (const s of shopsOf(G.town.shops, p.pid)) G.world?.avatars.delete(s.owner);
   toast(`${p.name} さんが町を出ました（お店は店員さんがおまかせ営業します）`);
   broadcastTown();
 }
@@ -383,7 +414,7 @@ function clientOnData(d) {
       if (G.phase === 'lobby') { show('lobby'); renderLobby(); }
       break;
     }
-    case 'shop': if (!G.isHost) { G.town.shops[d.owner] = d.shop; bumpShop(d.owner); if (d.owner === G.me) refreshPrep(); } break;
+    case 'shop': if (!G.isHost) { G.town.shops[d.owner] = d.shop; bumpShop(d.owner); if (playerOf(d.shop) === G.me) refreshPrep(); } break;
     case 'ready': if (!G.isHost) { G.players = new Map(d.players.map((p) => [p.pid, p])); updateReadyBtn(); if (G.phase === 'lobby') renderLobby(); } break;
     case 'phase': if (!G.isHost) { if (d.town) { G.town = d.town; for (const o of Object.keys(G.town.shops)) bumpShop(o); syncViews(true); } enterPhase(d.phase, d.phaseT); } break;
     case 'snap': if (!G.isHost) applySnap(d); break;
@@ -396,19 +427,57 @@ function clientOnData(d) {
 // 準備のコマンドを送る（親ならその場で）
 function sendCmd(c) {
   if (G.isHost) {
-    const r = G.world.cmd(G.me, c);
-    if (r.ok) { broadcastShop(G.me); if (c.op === 'moveLot') broadcastTown(); afterCmd(c, r); } else cmdFail(r);
+    const r = G.world.cmd(curKey(), c);
+    if (r.ok) { hostAfterCmd(G.me, curKey(), c); afterCmd(c, r); } else cmdFail(r);
     return Promise.resolve(r);
   }
+  return request({ k: 'cmd', c, sid: curKey() }).then((r) => { if (r.ok) afterCmd(c, r); else cmdFail(r); return r; });
+}
+// 親に頼んで、答えを待つ
+function request(msg) {
   return new Promise((res) => {
     const id = G.reqId++;
-    G.pending.set(id, (r) => { if (r.ok) afterCmd(c, r); else cmdFail(r); res(r); });
-    G.net.toHost({ k: 'cmd', id, c });
+    G.pending.set(id, res);
+    G.net.toHost({ ...msg, id });
   });
+}
+// 2店目・3店目を出す／たたむ
+async function doBranch(req) {
+  const name = GENRE[req.genre].name;
+  let r;
+  if (G.isHost) { r = openBranch(G.world, G.me, { ...req, name }); if (r.ok) { broadcastTown(); save(); } }
+  else r = await request({ k: 'branch', ...req, name });
+  if (!r.ok) { cmdFail(r); return; }
+  A.sfx.buy();
+  toast(`🎉 ${req.lot + 1}番の空き地に新しいお店を出しました！`);
+  setTimeout(() => switchShop(r.sid), 50);
+}
+async function doCloseShop(sid) {
+  let r;
+  if (G.isHost) { r = closeBranch(G.world, G.me, sid); if (r.ok) { broadcastTown(); save(); } }
+  else r = await request({ k: 'closeShop', sid });
+  if (!r.ok) { cmdFail(r); return; }
+  toast('お店をたたみました');
+  if (G.cur === sid) G.cur = null;
+  placeMeInShop(); refreshPrep();
+}
+function switchShop(sid) {
+  const old = views.get(curKey()); if (old) { old.grid.visible = false; old.setGhost(null); old.highlightItem(null); }
+  G.cur = sid;
+  Prep.edit = { place: null, rot: 0, sel: null };
+  placeMeInShop(G.phase === 'open');
+  refreshPrep(); updateGhost();
+  const s = G.town.shops[curKey()];
+  if (s) toast(`${GENRE[s.genre].icon} ${s.name} に来ました`);
+}
+function nextShop() {
+  const list = myShops(); if (list.length < 2) return;
+  const i = list.findIndex((s) => s.owner === curKey());
+  switchShop(list[(i + 1) % list.length].owner);
 }
 function afterCmd(c, r) {
   if (['place', 'floor', 'wall', 'levelUp', 'hire', 'ad', 'dev'].includes(c.op)) A.sfx.buy(); else A.sfx.select();
-  if (c.op === 'levelUp') toast(`🎉 「${LEVELS[G.town.shops[G.me].level].name}」になりました！`);
+  if (c.op === 'levelUp') toast(`🎉 「${LEVELS[G.town.shops[curKey()].level].name}」になりました！`);
   if (c.op === 'moveLot') { toast('引っ越しました！'); placeMeInShop(); }
   if (c.op === 'place' || c.op === 'moveItem') { if (Prep.edit.move != null) { Prep.edit.place = null; Prep.edit.move = null; } }
   refreshPrep();
@@ -469,7 +538,7 @@ async function save() {
 function enterPhase(ph, t) {
   G.phase = ph; G.phaseT = t ?? 0;
   Prep.edit = { place: null, rot: 0, sel: null };
-  const pv = views.get(G.me); if (pv) { pv.grid.visible = false; pv.setGhost(null); pv.highlightItem(null); }
+  for (const pv of views.values()) { pv.grid.visible = false; pv.setGhost(null); pv.highlightItem(null); }
   if (ph === 'lobby') {
     setHUD(false); $('prep').classList.add('hidden'); $('prep-toggle').classList.add('hidden');
     show('lobby'); renderLobby(); A.bgmStop();
@@ -505,7 +574,8 @@ function showResult(sum) {
 }
 function refreshPrep() {
   if (G.phase !== 'prep' || !G.town) return;
-  Prep.render({ shop: G.town.shops[G.me], freeLots: freeLots(G.town), send: sendCmd, toast, onEdit: () => updateGhost() });
+  Prep.render({ shop: G.town.shops[curKey()], money: myWallet()?.money, mine: myShops(), freeLots: freeLots(G.town), send: sendCmd, toast, onEdit: () => updateGhost(),
+    switchShop, closeShop: doCloseShop, openBranch: doBranch });
   updateReadyBtn();
 }
 function updateReadyBtn() {
@@ -548,7 +618,8 @@ function syncViews(force) {
 // ---------- 自分のキャラの位置 ----------
 function placeMeOutside() { Object.assign(G.me3d, { x: -72, z: 5.5, rot: Math.PI / 2, path: [], pendingAct: null }); }
 function placeMeInShop(kitchen) {
-  const s = G.town?.shops[G.me]; if (!s) return;
+  G.me3d.sign = false;
+  const s = G.town?.shops[curKey()]; if (!s) return;
   const f = frame(s);
   const p = kitchen ? f.kitchenIdle : f.hallIdle;
   Object.assign(G.me3d, { x: p.x, z: p.z, rot: f.rot + Math.PI, path: [], pendingAct: null });
@@ -624,6 +695,9 @@ addEventListener('keydown', (e) => {
   if (!G.town || G.phase === 'title' || G.phase === 'lobby') return;
   if (e.code === 'Space' || e.code === 'KeyE' || e.code === 'Enter') { e.preventDefault(); doAct(); }
   if (e.code === 'KeyT') toggleTownView();
+  if (e.code === 'KeyP' && G.phase === 'open') setAuto(!G.auto);
+  if (e.code === 'KeyB') toggleSign();
+  if (e.code === 'Tab') { e.preventDefault(); nextShop(); }
   if (e.code === 'KeyQ') G.cam.cine = !G.cam.cine;
   if (e.code === 'KeyG') toast('画質：' + GX.cycleQuality());
   if (e.code === 'KeyM') toast(A.toggleMute() ? '音オフ' : '音オン');
@@ -673,10 +747,10 @@ function groundAt(x, y, h = 0.1) {
 
 function onTap(x, y) {
   if (!G.town || G.phase === 'title' || G.phase === 'lobby' || G.phase === 'result') return;
-  const my = G.town.shops[G.me];
+  const my = G.town.shops[curKey()];
   // 内装の編集
   if (G.phase === 'prep' && Prep.tab === 'decor' && my) { decorTap(x, y); return; }
-  const v = views.get(G.me);
+  const v = views.get(curKey());
   raycaster.setFromCamera(ndc(x, y), camera);
   if (v && G.phase === 'open') {
     const hits = raycaster.intersectObjects(v.interact, false);
@@ -685,7 +759,7 @@ function onTap(x, y) {
       let tgt;
       if (a.k === 'stove') tgt = f.stoves[a.i].stand;
       else { const s = f.slots[a.i]; const r = regionAt(G.me3d.x, G.me3d.z); tgt = r.k === 'shop' && r.v > f.passV ? s.back : s.front; }
-      walkTo(tgt, true);
+      walkTo(tgt, true, true);
       return;
     }
   }
@@ -695,17 +769,18 @@ function onTap(x, y) {
   if (v && G.phase === 'open') {
     let best = -1, bd = 1.2;
     v.seats.forEach((s, i) => { const d = Math.hypot(s.x - p.x, s.z - p.z); if (d < bd) { bd = d; best = i; } });
-    if (best >= 0) { const s = v.seats[best]; const dx = s.x - s.px, dz = s.z - s.pz, dl = Math.hypot(dx, dz) || 1; walkTo({ x: s.x - dz / dl * 0.6, z: s.z + dx / dl * 0.6 }, true); return; }
+    if (best >= 0) { const s = v.seats[best]; const dx = s.x - s.px, dz = s.z - s.pz, dl = Math.hypot(dx, dz) || 1; walkTo({ x: s.x - dz / dl * 0.6, z: s.z + dx / dl * 0.6 }, true, true); return; }
   }
-  walkTo(p, false);
+  walkTo(p, false, true);
 }
-function walkTo(p, act) {
+function walkTo(p, act, manual) {
+  if (manual) G.autoPause = performance.now() + 2500;
   G.me3d.path = planPath(G.me3d, p);
   G.me3d.pendingAct = act;
 }
 
 function decorTap(x, y) {
-  const s = G.town.shops[G.me], v = views.get(G.me);
+  const s = G.town.shops[curKey()], v = views.get(curKey());
   const p = groundAt(x, y);
   if (!p || !v) return;
   const f = v.f;
@@ -725,15 +800,15 @@ function decorTap(x, y) {
   refreshPrep();
 }
 function ghostItem(u, vv) {
-  const v = views.get(G.me), f = v.f, E = Prep.edit;
+  const v = views.get(curKey()), f = v.f, E = Prep.edit;
   const base = { id: E.place, u: 0, v: 0, r: E.rot };
   const { w, d } = furnSize(base);
   const i0 = Math.round(u + f.cols / 2 - w / 2), j0 = Math.round(vv - 0.5 - d / 2);
   return snapItem(f, base, i0, j0);
 }
 function updateGhost() {
-  const v = views.get(G.me); if (!v) return;
-  const s = G.town.shops[G.me];
+  const v = views.get(curKey()); if (!v) return;
+  const s = G.town.shops[curKey()];
   const editing = G.phase === 'prep' && Prep.tab === 'decor';
   v.grid.visible = editing;
   if (!editing || !Prep.edit.place) { v.setGhost(null); if (!editing) v.highlightItem(null); return; }
@@ -748,11 +823,11 @@ function updateGhost() {
 
 // その場で「使う」
 function myContext() {
-  if (G.phase !== 'open' || !G.town?.shops[G.me]) return null;
-  if (G.isHost) return G.world.contextAt(G.me);
-  const v = views.get(G.me); const dyn = G.dyn?.shops?.[G.me];
+  if (G.phase !== 'open' || !G.town?.shops[curKey()]) return null;
+  if (G.isHost) return G.world.contextAt(curKey());
+  const v = views.get(curKey()); const dyn = G.dyn?.shops?.[curKey()];
   if (!v || !dyn) return null;
-  const av = { x: G.me3d.x, z: G.me3d.z, ...(G.avatarsInfo[G.me] || {}) };
+  const av = { x: G.me3d.x, z: G.me3d.z, ...(G.avatarsInfo[curKey()] || {}) };
   const seats = v.seats.map((s, i) => ({ ...s, dirty: dyn.dirty[i] & 1, occ: dyn.dirty[i] & 2 }));
   return contextOf(av, v.f, dyn.orders, seats);
 }
@@ -763,8 +838,8 @@ function doAct() {
     if (c?.k === 'carrying') toast('お客さんの席まで運んでね（光っている席）');
     return;
   }
-  if (G.isHost) G.world.act(G.me);
-  else G.net?.toHost({ k: 'act', x: G.me3d.x, z: G.me3d.z, rot: G.me3d.rot });
+  if (G.isHost) G.world.act(curKey());
+  else G.net?.toHost({ k: 'act', sid: curKey(), x: G.me3d.x, z: G.me3d.z, rot: G.me3d.rot });
   const snd = { cook: A.sfx.cook, pick: A.sfx.pick, serve: A.sfx.serve, clean: A.sfx.clean }[c.k];
   snd?.();
 }
@@ -778,7 +853,7 @@ function packSnap() {
   const p = v.people.map((x) => [x.id, Math.round(x.x * 20) / 20, Math.round(x.z * 20) / 20, Math.round(x.rot * 100) / 100, x.pose,
     x.carry || 0, x.emote || 0, KIND.indexOf(x.kind), TYPES.indexOf(x.type), x.look || 0, x.shop || 0, x.staff?.role || 0]);
   const av = {};
-  for (const [o, a] of G.world.avatars) av[o] = [Math.round(a.x * 20) / 20, Math.round(a.z * 20) / 20, Math.round(a.rot * 100) / 100, a.carry, a.cook, a.moving ? 1 : 0];
+  for (const [o, a] of G.world.avatars) av[o] = [Math.round(a.x * 20) / 20, Math.round(a.z * 20) / 20, Math.round(a.rot * 100) / 100, a.carry, a.cook, a.moving ? 1 : 0, a.sign ? 1 : 0];
   return { k: 'snap', h: v.hour, t: G.phaseT, p, s: v.shops, av, fx: G.world.events.slice(0, 30) };
 }
 function applySnap(d) {
@@ -796,8 +871,8 @@ function applySnap(d) {
   G.avatarsInfo = {};
   G.remoteAv = {};
   for (const [o, a] of Object.entries(d.av || {})) {
-    G.avatarsInfo[o] = { carry: a[3], cook: a[4] };
-    if (o !== G.me) G.remoteAv[o] = a;
+    G.avatarsInfo[o] = { carry: a[3], cook: a[4], sign: a[6] };
+    if (o !== curKey()) G.remoteAv[o] = a;
   }
   G.dyn = { hour: d.h, shops: d.s, people: [...G.ppl.values()] };
   handleFx(d.fx || []);
@@ -821,7 +896,7 @@ function emojiSprite(e) {
 }
 function handleFx(list) {
   for (const ev of list) {
-    const mine = ev.shop === G.me;
+    const mine = ev.shop === curKey();
     if (ev.k === 'coin') {
       if (mine) A.sfx.coin();
       const near = Math.hypot(ev.x - camTarget.x, ev.z - camTarget.z) < 45;
@@ -866,6 +941,36 @@ function nameTag(owner, name, color, x, z) {
   s.userData.seen = true;
 }
 
+// 看板（持って歩くとお客さんがついて来る）
+const signBoards = new Map();
+function signBoard(key, shop, x, z, rot, show) {
+  if (!show || !shop) return;
+  let g = signBoards.get(key);
+  const label = `${GENRE[shop.genre].icon} ${shop.name}`;
+  if (!g || g.userData.label !== label) {
+    if (g) scene.remove(g);
+    g = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 2.3, 6), new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.8 }));
+    pole.position.y = 1.15; pole.castShadow = true; g.add(pole);
+    const c = document.createElement('canvas'); c.width = 256; c.height = 160;
+    const x2 = c.getContext('2d');
+    x2.fillStyle = '#fff7e6'; x2.fillRect(0, 0, 256, 160);
+    x2.strokeStyle = '#' + PLAYER_COLORS[shop.color % 4].toString(16).padStart(6, '0'); x2.lineWidth = 16; x2.strokeRect(8, 8, 240, 144);
+    x2.fillStyle = '#3a2a1a'; x2.textAlign = 'center'; x2.textBaseline = 'middle';
+    x2.font = 'bold 52px sans-serif'; x2.fillText(GENRE[shop.genre].icon, 128, 52);
+    x2.font = 'bold 30px "M PLUS Rounded 1c", sans-serif'; x2.fillText(shop.name.slice(0, 7), 128, 112);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.6, 0.04), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }));
+    board.position.y = 2.25; board.castShadow = true; g.add(board);
+    g.userData.label = label;
+    scene.add(g); signBoards.set(key, g);
+  }
+  // 右手で持っているように少し横にずらす
+  g.position.set(x + Math.cos(rot) * 0.38, 0, z - Math.sin(rot) * 0.38);
+  g.rotation.y = rot;
+  g.visible = true; g.userData.seen = true;
+}
+
 // ---------- カメラ ----------
 const camTarget = new THREE.Vector3(-60, 0, 0);
 function updateCamera(dt) {
@@ -884,7 +989,7 @@ function updateCamera(dt) {
   if (r.k === 'shop') yaw = r.f.side < 0 ? 0 : Math.PI;
   const editing = G.phase === 'prep' && Prep.tab === 'decor' && !$('prep').classList.contains('hidden');
   let dist = c.dist, pitch = THREE.MathUtils.lerp(0.95, 1.2, clamp((dist - 10) / 80, 0, 1));
-  const my = G.town?.shops[G.me];
+  const my = G.town?.shops[curKey()];
   if (editing && my) {
     const f = frame(my); const ctr = f.toW(0, f.D / 2);
     tx = ctr.x; tz = ctr.z; yaw = f.side < 0 ? 0 : Math.PI; dist = Math.max(f.W, f.D) * 1.55; pitch = 1.15;
@@ -942,6 +1047,14 @@ function updateMe(dt) {
     let d = tr - me.rot; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
     me.rot += d * Math.min(1, dt * 12);
   }
+  // 自分の別のお店に入ったら、そのお店で働く
+  const here = regionAt(me.x, me.z);
+  if (here.k === 'shop' && !here.s.cpu && playerOf(here.s) === G.me && here.s.owner !== curKey()) {
+    const info = G.isHost ? G.world?.avatars.get(curKey()) : G.avatarsInfo[curKey()];
+    if (info?.carry == null && info?.cook == null) { G.cur = here.s.owner; refreshPrep(); }
+  }
+  if (mx || mz) G.autoPause = performance.now() + 2500;
+  if (G.auto && G.phase === 'open') { G.autoT -= dt; if (G.autoT <= 0) { G.autoT = 0.35; autoPilot(); } }
   // タップで決めた行動：着いたら実行
   if (me.pendingAct && !me.path.length) {
     me.pendingAct = false;
@@ -953,19 +1066,80 @@ function updateMe(dt) {
     const c = myContext();
     if (c?.k === 'serve') { lastActTry = performance.now(); doAct(); }
   }
-  if (G.isHost) G.world?.setAvatar(G.me, me.x, me.z, me.rot, me.moving);
+  if (G.isHost) { if (G.world) hostAvatar(G.me, curKey(), me.x, me.z, me.rot, me.moving, !!me.sign); }
   else {
     posSendT -= dt;
-    if (posSendT <= 0 && G.net) { posSendT = 0.1; G.net.toHost({ k: 'pos', x: Math.round(me.x * 100) / 100, z: Math.round(me.z * 100) / 100, rot: Math.round(me.rot * 100) / 100, m: me.moving ? 1 : 0 }); }
+    if (posSendT <= 0 && G.net) { posSendT = 0.1; G.net.toHost({ k: 'pos', sid: curKey(), sg: me.sign ? 1 : 0, x: Math.round(me.x * 100) / 100, z: Math.round(me.z * 100) / 100, rot: Math.round(me.rot * 100) / 100, m: me.moving ? 1 : 0 }); }
   }
 }
+
+// ---------- オートプレイ：自分のキャラが自分で作る・運ぶ・片づける ----------
+function besideSeat(s, k = 0.6) {
+  const dx = s.x - s.px, dz = s.z - s.pz, dl = Math.hypot(dx, dz) || 1;
+  return { x: s.x - dz / dl * k, z: s.z + dx / dl * k };
+}
+function autoPilot() {
+  const me = G.me3d, K = curKey();
+  if (me.path.length || me.pendingAct || performance.now() < G.autoPause) return;
+  const v = views.get(K), dyn = G.dyn?.shops?.[K], s = G.town.shops[K];
+  if (!v || !dyn || !s) return;
+  const info = (G.isHost ? G.world.avatars.get(K) : G.avatarsInfo[K]) || {};
+  if (info.cook != null) return; // 料理中はコンロの前にいる
+  const f = v.f, r = regionAt(me.x, me.z);
+  const inK = r.k === 'shop' && r.s.owner === K && r.v > f.passV;
+  const dist = (p) => Math.hypot(p.x - me.x, p.z - me.z);
+  // 運んでいる料理はお客さんの席へ（近づくと自動で出す）
+  if (info.carry != null) {
+    const o = dyn.orders.find((x) => x.id === info.carry);
+    const seat = o && v.seats[o.seat];
+    if (seat) walkTo(besideSeat(seat), false);
+    return;
+  }
+  // できた料理を取りに行く
+  const ready = dyn.orders.filter((o) => o.state === 'ready' && o.slot != null && !o.by && f.slots[o.slot]);
+  if (ready.length) {
+    const sl = f.slots[ready[0].slot];
+    walkTo(inK ? sl.back : sl.front, true);
+    return;
+  }
+  // 注文があれば空いているコンロで作る
+  const wait = dyn.orders.find((o) => o.state === 'wait' && !o.by);
+  if (wait) {
+    const busy = new Set(dyn.orders.filter((o) => o.stove != null).map((o) => o.stove));
+    const free = f.stoves.map((st, i) => i).filter((i) => !busy.has(i)).sort((a, b) => dist(f.stoves[a].stand) - dist(f.stoves[b].stand));
+    if (free.length) { walkTo(f.stoves[free[0]].stand, true); return; }
+  }
+  // よごれた席を片づける
+  const dirty = v.seats.map((st, i) => i).filter((i) => (dyn.dirty[i] & 1) && !(dyn.dirty[i] & 2));
+  if (dirty.length) {
+    dirty.sort((a, b) => dist(v.seats[a]) - dist(v.seats[b]));
+    walkTo(besideSeat(v.seats[dirty[0]]), true);
+    return;
+  }
+  // ひまなときは厨房で待つ
+  if (dist(f.kitchenIdle) > 1.2) walkTo(f.kitchenIdle, false);
+}
+function toggleSign() {
+  if (G.phase !== 'open') return;
+  G.me3d.sign = !G.me3d.sign;
+  if (G.me3d.sign) { G.auto && setAuto(false); toast('🪧 看板を持ちました。町を歩くと、お客さんがついて来ます。お店の前まで連れて行こう！'); }
+  else toast('看板をおろしました');
+}
+$('sign-btn').addEventListener('click', toggleSign);
+function setAuto(on) {
+  if (on) G.me3d.sign = false;
+  G.auto = on; LS.set('mm-auto', on ? '1' : '0');
+  G.autoPause = 0;
+  toast(on ? '🤖 オートプレイ：自分のキャラが料理・配膳・片づけをします' : 'オートプレイを止めました');
+}
+$('auto-btn').addEventListener('click', () => setAuto(!G.auto));
 
 // ---------- 画面の表示 ----------
 let hudT = 0;
 function updateHUD(dt) {
   hudT -= dt; if (hudT > 0) return; hudT = 0.2;
   const t = G.town; if (!t) return;
-  const s = t.shops[G.me];
+  const s = t.shops[curKey()];
   $('hud-day').textContent = `${t.day}日目`;
   $('hud-phase').textContent = G.phase === 'prep' ? '🛠️ 準備' : G.phase === 'open' ? '🔔 営業中' : '🌙 閉店';
   const hour = G.phase === 'open' ? (G.dyn?.hour ?? OPEN_HOUR) : G.phase === 'prep' ? 9 + (1 - G.phaseT / PREP_TIME) * 2 : 21;
@@ -973,12 +1147,12 @@ function updateHUD(dt) {
   const T = Math.max(0, Math.ceil(G.phaseT));
   $('hud-timer').textContent = `のこり ${Math.floor(T / 60)}:${String(T % 60).padStart(2, '0')}`;
   if (s) {
-    $('hud-money').textContent = yen(s.money);
+    $('hud-money').textContent = yen(myWallet().money);
     $('hud-rating').textContent = `${stars(s.rating)} ${s.rating.toFixed(2)}`;
   }
   $('hud-buzz-bar').style.width = `${Math.round(t.buzz)}%`;
   $('hud-buzz-name').textContent = buzzName(t.buzz);
-  const dyn = G.dyn?.shops?.[G.me];
+  const dyn = G.dyn?.shops?.[curKey()];
   const box = $('today-box');
   if (G.phase === 'open' && dyn) {
     const waiting = dyn.orders.filter((o) => o.state === 'wait' || o.state === 'cook').length;
@@ -991,6 +1165,16 @@ function updateHUD(dt) {
     box.innerHTML = `準備OK：${ready.filter((p) => p.ready).length} / ${ready.length}人<br><span style="opacity:.8">みんながOKを押すとすぐ開店</span>`;
     box.classList.remove('hidden');
   } else box.classList.add('hidden');
+  const ab = $('auto-btn');
+  ab.classList.toggle('hidden', G.phase !== 'open');
+  ab.classList.toggle('on', G.auto);
+  ab.textContent = G.auto ? '🤖 オート ON' : '🤖 オート OFF';
+  const sb = $('sign-btn');
+  sb.classList.toggle('hidden', G.phase !== 'open');
+  sb.classList.toggle('on', !!G.me3d.sign);
+  const fol = G.dyn?.people ? G.dyn.people.filter((p) => p.state === 'follow' && p.follow === curKey()).length : 0;
+  sb.textContent = G.me3d.sign ? `🪧 看板中${G.isHost && fol ? `（${fol}人）` : ''}` : '🪧 看板を持つ';
+  $('btn-nextshop').classList.toggle('hidden', myShops().length < 2);
   // 行動ボタン
   const c = myContext();
   const btn = $('act-btn');
@@ -1000,7 +1184,9 @@ function updateHUD(dt) {
   let hint = '';
   if (G.phase === 'open') {
     const r = regionAt(G.me3d.x, G.me3d.z);
-    if (r.k !== 'shop' || r.s.owner !== G.me) hint = 'T で町全体 ／ 自分のお店にもどって手伝おう';
+    if (G.me3d.sign) hint = '🪧 お客さんを連れて、自分のお店の前まで歩こう（B でおろす）';
+    else if (G.auto) hint = '🤖 オートプレイ中（P で切りかえ）';
+    else if (r.k !== 'shop' || r.s.owner !== curKey()) hint = 'T で町全体 ／ 自分のお店にもどって手伝おう';
     else if (dyn && dyn.orders.some((o) => o.state === 'wait')) hint = 'コンロの前で Space（またはタップ）で料理を作ろう';
     else if (dyn && dyn.orders.some((o) => o.state === 'ready')) hint = '受け取り口の料理を取って、お客さんの席へ';
   } else if (G.phase === 'prep') hint = Prep.tab === 'decor' ? '床をクリックして家具を置こう（R で回す）' : '';
@@ -1059,13 +1245,14 @@ function loop(now) {
   const avatars = [];
   for (const t of nameTags.values()) t.userData.seen = false;
   if (G.town && G.phase !== 'title' && G.phase !== 'lobby') {
-    const meS = G.town.shops[G.me];
-    const myInfo = G.isHost ? G.world?.avatars.get(G.me) : G.avatarsInfo[G.me];
-    const carryRid = myInfo?.carry != null ? orderRid(G.me, myInfo.carry) : null;
+    const meS = G.town.shops[curKey()];
+    const myInfo = G.isHost ? G.world?.avatars.get(curKey()) : G.avatarsInfo[curKey()];
+    const carryRid = myInfo?.carry != null ? orderRid(curKey(), myInfo.carry) : null;
     avatars.push({ id: 900000, kind: 'player', look: 1, color: PLAYER_COLORS[(meS?.color ?? 0) % 4], x: G.me3d.x, z: G.me3d.z, rot: G.me3d.rot,
-      pose: myInfo?.cook != null && !G.me3d.moving ? POSE.cook : carryRid ? POSE.carry : G.me3d.moving ? POSE.walk : POSE.stand, carry: carryRid, shop: G.me });
-    nameTag(G.me, G.name, PLAYER_COLORS[(meS?.color ?? 0) % 4], G.me3d.x, G.me3d.z);
-    const others = G.isHost ? [...(G.world?.avatars || [])].filter(([o]) => o !== G.me).map(([o, a]) => [o, [a.x, a.z, a.rot, a.carry, a.cook, a.moving]]) : Object.entries(G.remoteAv || {});
+      pose: myInfo?.cook != null && !G.me3d.moving ? POSE.cook : carryRid ? POSE.carry : G.me3d.moving ? POSE.walk : POSE.stand, carry: carryRid, shop: curKey() });
+    signBoard('@me', meS, G.me3d.x, G.me3d.z, G.me3d.rot, G.phase === 'open' && G.me3d.sign && myInfo?.carry == null && myInfo?.cook == null);
+    nameTag('@me', G.name, PLAYER_COLORS[(meS?.color ?? 0) % 4], G.me3d.x, G.me3d.z);
+    const others = G.isHost ? [...(G.world?.avatars || [])].filter(([o]) => o !== curKey()).map(([o, a]) => [o, [a.x, a.z, a.rot, a.carry, a.cook, a.moving, a.sign]]) : Object.entries(G.remoteAv || {});
     others.forEach(([o, a], i) => {
       const s = G.town.shops[o]; const col = PLAYER_COLORS[(s?.color ?? i + 1) % 4];
       const rid = a[3] != null ? orderRid(o, a[3]) : null;
@@ -1073,11 +1260,13 @@ function loop(now) {
       if (!rp) { rp = { x: a[0], z: a[1], rot: a[2] }; (G.remoteP ||= {})[o] = rp; }
       const k = Math.min(1, dt * 10); rp.x += (a[0] - rp.x) * k; rp.z += (a[1] - rp.z) * k; rp.rot = a[2];
       avatars.push({ id: 900001 + i, kind: 'player', look: 2 + i, color: col, x: rp.x, z: rp.z, rot: rp.rot, pose: a[4] != null && !a[5] ? POSE.cook : rid ? POSE.carry : a[5] ? POSE.walk : POSE.stand, carry: rid, shop: o });
-      const p = G.players.get(o);
+      signBoard(o, s, rp.x, rp.z, rp.rot, !!a[6]);
+      const p = s && G.players.get(playerOf(s));
       nameTag(o, p?.name || s?.ownerName || '', col, rp.x, rp.z);
     });
   }
   for (const t of nameTags.values()) if (!t.userData.seen) t.visible = false;
+  for (const g of signBoards.values()) { if (!g.userData.seen) g.visible = false; g.userData.seen = false; }
   const all = list.concat(avatars);
   crowd.update(all, dt, elapsed);
   updateEmotes(list);

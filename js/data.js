@@ -214,20 +214,26 @@ export const AD = Object.fromEntries(ADS.map((a) => [a.id, a]));
 // ---------- 町 ----------
 // 区画：x は通りに沿った位置、side -1 は北側（扉は南向き）、+1 は南側
 export const LOTS = [
-  { id: 0, x: -50, side: -1, traffic: 1.5, rent: 9000 },
-  { id: 1, x: -32, side: -1, traffic: 1.25, rent: 7000 },
-  { id: 2, x: -14, side: -1, traffic: 1.15, rent: 6500 },
-  { id: 3, x: 14, side: -1, traffic: 1.0, rent: 5000 },
-  { id: 4, x: 32, side: -1, traffic: 0.85, rent: 4000 },
-  { id: 5, x: 50, side: -1, traffic: 0.75, rent: 3000 },
-  { id: 6, x: -50, side: 1, traffic: 1.45, rent: 8500 },
-  { id: 7, x: -32, side: 1, traffic: 1.2, rent: 6500 },
-  { id: 8, x: -14, side: 1, traffic: 1.1, rent: 6000 },
-  { id: 9, x: 14, side: 1, traffic: 0.95, rent: 4500 },
-  { id: 10, x: 32, side: 1, traffic: 0.8, rent: 3500 },
-  { id: 11, x: 50, side: 1, traffic: 0.7, rent: 2800 },
+  { id: 0, x: -50, side: -1, traffic: 1.5, rent: 9000, price: 150000 },
+  { id: 1, x: -32, side: -1, traffic: 1.25, rent: 7000, price: 115000 },
+  { id: 2, x: -14, side: -1, traffic: 1.15, rent: 6500, price: 90000 },
+  { id: 3, x: 14, side: -1, traffic: 1.0, rent: 5000, price: 65000 },
+  { id: 4, x: 32, side: -1, traffic: 0.85, rent: 4000, price: 50000 },
+  { id: 5, x: 50, side: -1, traffic: 0.75, rent: 3000, price: 40000 },
+  { id: 6, x: -50, side: 1, traffic: 1.45, rent: 8500, price: 140000 },
+  { id: 7, x: -32, side: 1, traffic: 1.2, rent: 6500, price: 105000 },
+  { id: 8, x: -14, side: 1, traffic: 1.1, rent: 6000, price: 85000 },
+  { id: 9, x: 14, side: 1, traffic: 0.95, rent: 4500, price: 60000 },
+  { id: 10, x: 32, side: 1, traffic: 0.8, rent: 3500, price: 46000 },
+  { id: 11, x: 50, side: 1, traffic: 0.7, rent: 2800, price: 36000 },
 ];
 export const MOVE_COST = 40000;
+// 土地代：駅に近いほど高い。最初の資本金なら、どこでも買える
+export const START_CAPITAL = 230000;
+export const BRANCH_FEE = 30000; // 2店目からの開店準備費
+export const MAX_SHOPS = 3; // 1人が持てるお店の数
+// 引っ越し：新しい土地代から、今の土地を売った分（7割）を引く
+export const moveCost = (from, to) => Math.max(20000, LOTS[to].price - Math.round(LOTS[from].price * 0.7));
 export const BUZZ_LEVELS = [
   { min: 0, name: 'さびしい町' },
   { min: 15, name: 'ふつうの町' },

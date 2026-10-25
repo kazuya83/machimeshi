@@ -6,11 +6,11 @@ import { Town } from './town.js';
 import { ShopView } from './shopview.js';
 import { Crowd } from './people.js';
 import { World, newTown, newShop, makeCpuShop, freeLots, awayEarnings, contextOf, POSE, recipeOf, playerOf, walletOf, shopsOf, openBranch, closeBranch, bankrupt } from './sim.js';
-import { frame, layoutOk, snapItem, seatsOf, furnSize } from './geo.js';
+import { frame, layoutOk, snapItem, seatsOf, furnSize, NODES, LOT_NODE } from './geo.js';
 import { Net, makeCode } from './net.js';
 import { Store } from './save.js';
 import * as A from './audio.js';
-import { Prep, renderResult, renderRanking, Rank, renderSetup, Setup } from './ui.js';
+import { Prep, renderResult, renderRanking, Rank, renderSetup, Setup, renderShopList, renderShopInfo } from './ui.js';
 import { yen, stars, hourText, clamp, esc } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -122,7 +122,8 @@ document.addEventListener('click', async (e) => {
     case 'start': if (G.isHost) hostStartDay(); else G.net?.toHost({ k: 'start' }); break;
     case 'open-shop': openMyShop(); break;
     case 'ranking': case 'rank': showRanking(); break;
-    case 'close': $('modal').classList.add('hidden'); G.restartOpen = false; break;
+    case 'shops': showShops(); break;
+    case 'close': $('modal').classList.add('hidden'); G.restartOpen = false; G.info = null; break;
     case 'ok': $('overlay').classList.add('hidden'); break;
     case 'next': if (G.isHost) hostNextDay(); else G.net?.toHost({ k: 'next' }); break;
     case 'endday': hostBackToLobby(); break;
@@ -146,6 +147,8 @@ document.addEventListener('click', (e) => {
   const l = e.target.closest('[data-lot]'); if (l) { Setup.lot = +l.dataset.lot; Setup.name = inName(); renderLobby(); if (G.restartOpen) showRestart(); }
   const rs = e.target.closest('[data-rs]'); if (rs) { Rank.scope = rs.dataset.rs; showRanking(); }
   const rt = e.target.closest('[data-rt]'); if (rt) { Rank.tab = rt.dataset.rt; showRanking(); }
+  const sh = e.target.closest('[data-shop]'); if (sh) { A.sfx.menu(); showShopInfo(sh.dataset.shop); }
+  const pk = e.target.closest('[data-peek]'); if (pk) peekShop(pk.dataset.peek);
 });
 $('prep').addEventListener('click', (e) => Prep.click(e));
 $('prep-toggle').addEventListener('click', () => { $('prep').classList.remove('hidden'); $('prep-toggle').classList.add('hidden'); });
@@ -347,7 +350,7 @@ function renderLobby() {
   for (const s of shops) {
     const p = G.players.get(playerOf(s));
     const col = s.cpu ? '#8a99a8' : '#' + PLAYER_COLORS[s.color % 4].toString(16).padStart(6, '0');
-    list.push(`<li><span class="dot" style="background:${col}"></span><span class="pn">${GENRE[s.genre].icon} ${esc(s.name)}<br><small>${s.cpu ? 'コンピューター' : esc(s.ownerName)} ・${LEVELS[s.level].name} ・★${s.rating.toFixed(2)}</small></span>
+    list.push(`<li data-shop="${esc(s.owner)}"><span class="dot" style="background:${col}"></span><span class="pn">${GENRE[s.genre].icon} ${esc(s.name)}<br><small>${s.cpu ? 'コンピューター' : esc(s.ownerName)} ・${LEVELS[s.level].name} ・★${s.rating.toFixed(2)}</small></span>
       <span class="tag ${s.cpu ? 'cpu' : p?.online ? 'on' : ''}">${s.cpu ? 'CPU' : p?.online ? (p.ready ? '準備OK' : 'いる') : 'おまかせ営業'}</span></li>`);
   }
   for (const p of G.players.values()) if (!t.shops[p.pid]) list.push(`<li><span class="dot" style="background:#ccc"></span><span class="pn">${esc(p.name)}<br><small>お店を準備中…</small></span><span class="tag on">いる</span></li>`);
@@ -686,6 +689,40 @@ function updateReadyBtn() {
   b.textContent = p?.ready ? '準備OK ✓' : '準備OK！';
 }
 
+// ---------- お店の情報 ----------
+function showShops() {
+  if (!G.town) return;
+  G.info = { list: true };
+  $('modal-body').innerHTML = renderShopList(G.town, G.dyn?.shops, G.me);
+  $('modal').classList.remove('hidden');
+}
+function poopsNear(s) {
+  const n = NODES[LOT_NODE[s.lot]];
+  return (G.poops || []).filter((p) => Math.hypot(p.x - n.x, p.z - n.z) < 9).length;
+}
+function showShopInfo(sid) {
+  if (!G.town) return;
+  const s = G.town.shops[sid];
+  G.info = { sid };
+  const body = $('modal-body'), y = body.scrollTop;
+  body.innerHTML = renderShopInfo(G.town, sid, G.dyn?.shops, G.me, { online: s && !s.cpu ? !!G.players.get(playerOf(s))?.online : null, poop: s ? poopsNear(s) : 0 });
+  body.scrollTop = y;
+  $('modal').classList.remove('hidden');
+}
+// 開いているあいだは今日の数字を更新する
+setInterval(() => {
+  if (!G.info || $('modal').classList.contains('hidden')) return;
+  if (G.info.sid) showShopInfo(G.info.sid); else showShops();
+}, 1500);
+// カメラでそのお店を見に行く（数秒で自分のところへ戻る）
+function peekShop(sid) {
+  if (!G.town?.shops[sid]) return;
+  $('modal').classList.add('hidden'); G.info = null;
+  if (['lobby', 'title', 'result'].includes(G.phase)) { toast('お店を見に行けるのは準備・営業の時間です'); return; }
+  G.cam.peek = { sid, until: performance.now() + 7000 };
+  toast('📍 お店を見ています（動くと戻ります）');
+}
+
 // ---------- ランキング ----------
 function showRanking(withMenu) {
   if (!G.town) return;
@@ -798,6 +835,7 @@ addEventListener('keydown', (e) => {
   if (!G.town || G.phase === 'title' || G.phase === 'lobby') return;
   if (e.code === 'Space' || e.code === 'KeyE' || e.code === 'Enter') { e.preventDefault(); doAct(); }
   if (e.code === 'KeyT') toggleTownView();
+  if (e.code === 'KeyI') { if (G.info && !$('modal').classList.contains('hidden')) { $('modal').classList.add('hidden'); G.info = null; } else showShops(); }
   if (e.code === 'KeyP' && G.phase === 'open') setAuto(!G.auto);
   if (e.code === 'KeyB') toggleSign();
   if (e.code === 'KeyU') dropPoop();
@@ -1124,6 +1162,11 @@ function updateCamera(dt) {
     const sideShift = innerWidth > 700 ? 0.18 * dist : 0;
     tx += Math.cos(yaw) * sideShift;
   }
+  const pk = c.peek, ps = pk && G.town?.shops[pk.sid];
+  if (ps && performance.now() < pk.until && !G.keys.size && !(G.joy && (G.joy.x || G.joy.y))) {
+    const f = frame(ps); const ctr = f.toW(0, f.D / 2);
+    tx = ctr.x; tz = ctr.z; yaw = f.side < 0 ? 0 : Math.PI; dist = Math.max(f.W, f.D) * 1.9 + 6; pitch = 1.0;
+  } else c.peek = null;
   if (G.phase === 'lobby' || G.phase === 'title') {
     c.cineT += dt * 0.04;
     tx = Math.cos(c.cineT) * 30; tz = 0; yaw = c.cineT * 0.5; dist = 75; pitch = 0.7;

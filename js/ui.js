@@ -317,3 +317,54 @@ export function renderSetup(town, me) {
     <button class="btn primary" data-act="open-shop" ${Setup.lot == null ? 'disabled' : ''}>このお店を出す！</button>`;
 }
 export { PLAYER_COLORS };
+
+// ---------- お店の情報（ほかのお店も見られる） ----------
+const ownerLabel = (s) => (s.cpu ? 'コンピューター' : esc(s.ownerName || 'プレイヤー'));
+export function renderShopList(town, today, me) {
+  const shops = Object.values(town.shops).sort((a, b) => b.rating - a.rating);
+  let h = `<h2>🔍 ${esc(town.name)} のお店（${shops.length}店）</h2><p class="note">お店をタップすると、メニューや売上などがくわしく見られます。</p><div class="shoplist">`;
+  for (const s of shops) {
+    const t = today?.[s.owner];
+    const mine = !s.cpu && playerOf(s) === me;
+    h += `<button class="item shopitem ${mine ? 'cur' : ''}" data-shop="${esc(s.owner)}"><span class="ic">${GENRE[s.genre].icon}</span>
+      <span class="grow1"><b>${esc(s.name)}</b>${mine ? ' <span class="tag on">自分</span>' : ''}${s.closing ? ' <span class="tag">閉店</span>' : ''}<br>
+      <small>${ownerLabel(s)}・${LEVELS[s.level].name}・★${s.rating.toFixed(2)}${t ? `・今日 ${t.cust}人 ${yen(t.sales)}` : ''}</small></span><span class="chev">›</span></button>`;
+  }
+  return h + '</div>';
+}
+export function renderShopInfo(town, sid, today, me, opt = {}) {
+  const s = town.shops[sid];
+  if (!s) return `<p>このお店はもうありません。</p><button class="btn" data-act="shops">← お店一覧</button>`;
+  const L = LOTS[s.lot], Lv = LEVELS[s.level];
+  const mine = !s.cpu && playerOf(s) === me;
+  const t = today?.[sid];
+  const st = s.stats;
+  const seats = seatCount(s.layout);
+  const ads = ADS.filter((a) => (a.once ? s.perm[a.id] : s.ads[a.id]));
+  const branches = s.cpu ? [] : Object.values(town.shops).filter((x) => !x.cpu && playerOf(x) === playerOf(s) && x.owner !== sid);
+  let h = `<button class="btn small" data-act="shops">← お店一覧</button>
+    <h2>${GENRE[s.genre].icon} ${esc(s.name)}${s.closing ? ' <span class="tag">閉店</span>' : ''}</h2>
+    <p class="note">${ownerLabel(s)}${opt.online != null && !s.cpu ? (opt.online ? '（いま町にいる）' : '（おまかせ営業中）') : ''}・${Lv.name}・空き地${s.lot + 1}（${L.side < 0 ? '北' : '南'}側・土地 ${yen(L.price)}）</p>
+    <div class="infogrid">
+      <div><small>評判</small><b>★${s.rating.toFixed(2)}</b><em>${stars(s.rating)}</em></div>
+      <div><small>席</small><b>${seats}席</b><em>店員 ${s.staff.length}/${Lv.staff}人</em></div>
+      <div><small>今日</small><b>${t ? yen(t.sales) : '−'}</b><em>${t ? `来店 ${t.cust}人・行列 ${t.q}人` : '営業前'}</em></div>
+      <div><small>これまで</small><b>${yen(st.totalSales)}</b><em>${st.totalCust}人・${st.days}日</em></div>
+    </div>`;
+  if (s.last) {
+    const r = s.last;
+    h += `<div class="sec">📅 ${r.day}日目の結果</div><p class="note" style="margin:0">売上 ${yen(r.sales)}・来店 ${r.cust}人・怒って帰った人 ${r.angry}人・もうけ <b style="color:${r.profit >= 0 ? '#2f9e5b' : '#c0392b'}">${yen(r.profit)}</b>${r.bestDish ? `・人気No.1「${esc(r.bestDish)}」` : ''}</p>`;
+  }
+  h += `<div class="sec">🍽️ メニュー（${s.menu.length}品）</div>`;
+  for (const m of s.menu) {
+    const R = recipeOf(s, m.rid); if (!R) continue;
+    h += `<div class="item"><span class="ic">${R.custom ? '⭐' : GENRE[R.genre]?.icon || '🍽️'}</span><span class="nm">${esc(R.name)}<small>おいしさ ${stars(R.taste)}</small></span><b>${yen(m.price)}</b></div>`;
+  }
+  h += `<div class="sec">🧑‍🍳 店員</div><p class="note" style="margin:0">${s.staff.length ? s.staff.map((x) => `${esc(x.name)}（${ROLES[x.role]?.name || ''}）`).join('、') : 'いません'}${s.cpu ? '・店長も働いています' : ''}</p>`;
+  h += `<div class="sec">📣 宣伝・設備</div><p class="note" style="margin:0">${ads.length ? ads.map((a) => a.name).join('、') : 'なし'}</p>`;
+  if (opt.poop) h += `<p class="note" style="margin:6px 0 0">💩 お店の前にうんこが ${opt.poop} 個あります（お客さんが近寄りにくい）</p>`;
+  if (branches.length) h += `<div class="sec">🏪 同じオーナーのお店</div><div>${branches.map((b) => `<button class="btn small" data-shop="${esc(b.owner)}">${GENRE[b.genre].icon} ${esc(b.name)}</button>`).join(' ')}</div>`;
+  h += `<div class="sec">🏆 トロフィー（${s.trophies.length}個）</div><div class="trophies">${TROPHIES.filter((T) => s.trophies.includes(T.id)).map((T) => `<span class="trophy">${T.icon} ${T.name}</span>`).join('') || '<span class="note">まだありません</span>'}</div>`;
+  h += `<div class="btn-row" style="margin-top:14px"><button class="btn primary" data-peek="${esc(sid)}">📍 このお店を見に行く</button><button class="btn" data-act="close">とじる</button></div>`;
+  return h;
+}

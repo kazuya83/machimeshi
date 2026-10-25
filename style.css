@@ -208,3 +208,14 @@ body.hit::after { content: ''; position: fixed; inset: 0; pointer-events: none; 
   body.prep-open .auto-btn, body.prep-open .joy, body.prep-open .act-btn, body.prep-open .hint { display: none; }
   .joy { left: 14px; bottom: 24px; width: 120px; height: 120px; }
 }
+/* お店の情報 */
+.shoplist .shopitem { width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; color: inherit; }
+.shopitem .grow1 { flex: 1; min-width: 0; }
+.shopitem .chev { font-size: 22px; color: #c9a77f; }
+.infogrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.infogrid > div { background: #fff; border-radius: 12px; padding: 8px 10px; }
+.infogrid small { display: block; color: #8a6a4a; font-weight: 800; }
+.infogrid b { display: block; font-size: 18px; }
+.infogrid em { display: block; font-style: normal; font-size: 12px; color: #7a6a5a; }
+#player-list li[data-shop] { cursor: pointer; }
+@media (max-width: 700px) and (max-height: 720px) { .icon { width: 32px; height: 32px; font-size: 15px; } .rightbar { gap: 3px; } }

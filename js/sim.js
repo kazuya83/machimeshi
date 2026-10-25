@@ -178,6 +178,7 @@ export class World {
         rating: shop.rating, review: td.revN ? td.revSum / td.revN : 0, money: walletOf(this.shops, shop).money, player: playerOf(shop), newTrophies: newT,
         bestDish: best ? recipeOf(shop, best)?.name : null, bestDishN: bn,
       });
+      shop.last = { day: this.town.day, sales: td.sales, cust: td.cust, angry: td.angry, profit, bestDish: best ? recipeOf(shop, best)?.name || null : null };
       dayCust += td.cust; ratingSum += shop.rating; n++;
       shop.lastSeen = shop.cpu ? shop.lastSeen : shop.lastSeen;
     }

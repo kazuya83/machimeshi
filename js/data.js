@@ -177,11 +177,11 @@ export const WALLS = [
 // W,D: 広さ  stoves: コンロの数  staff: 雇える人数  menu: 出せる料理の数
 export const LEVELS = [
   null,
-  { lv: 1, name: '屋台', W: 7, D: 7, stoves: 1, staff: 1, menu: 3, cost: 0, needRating: 0, needCust: 0 },
-  { lv: 2, name: '小さなお店', W: 10, D: 10, stoves: 2, staff: 2, menu: 5, cost: 150000, needRating: 3.0, needCust: 60 },
-  { lv: 3, name: '人気店', W: 12, D: 12, stoves: 2, staff: 3, menu: 6, cost: 450000, needRating: 3.4, needCust: 250 },
-  { lv: 4, name: '大きなレストラン', W: 13, D: 14, stoves: 3, staff: 4, menu: 8, cost: 1200000, needRating: 3.8, needCust: 700 },
-  { lv: 5, name: '高級店', W: 13, D: 15, stoves: 4, staff: 6, menu: 10, cost: 3000000, needRating: 4.2, needCust: 1600 },
+  { lv: 1, name: '屋台', W: 7, D: 7, stoves: 1, staff: 2, menu: 3, cost: 0, needRating: 0, needCust: 0 },
+  { lv: 2, name: '小さなお店', W: 10, D: 10, stoves: 2, staff: 3, menu: 5, cost: 150000, needRating: 3.0, needCust: 60 },
+  { lv: 3, name: '人気店', W: 12, D: 12, stoves: 2, staff: 4, menu: 6, cost: 450000, needRating: 3.4, needCust: 250 },
+  { lv: 4, name: '大きなレストラン', W: 13, D: 14, stoves: 3, staff: 6, menu: 8, cost: 1200000, needRating: 3.8, needCust: 700 },
+  { lv: 5, name: '高級店', W: 13, D: 15, stoves: 4, staff: 8, menu: 10, cost: 3000000, needRating: 4.2, needCust: 1600 },
 ];
 export const KITCHEN_DEPTH = 3.2;
 
@@ -192,6 +192,7 @@ export const ROLES = {
   hall: { name: 'ホール係', desc: '料理を運ぶ・片づける' },
 };
 const FIRST = ['たろう', 'はなこ', 'けんた', 'さくら', 'ゆうき', 'みゆ', 'そうた', 'あおい', 'りく', 'ひなた', 'こうじ', 'まな', 'しょう', 'えみ', 'だいち', 'ゆい'];
+export const RECRUIT_COST = 3000; // 求人を出して、はたらきたい人を入れかえる
 export function makeStaffCandidate(rnd, role) {
   const r = role || ['cook', 'hall', 'all'][Math.floor(rnd() * 3)];
   const skill = 1 + Math.floor(rnd() * rnd() * 5);

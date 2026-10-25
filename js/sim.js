@@ -1,7 +1,7 @@
 // 町の動き（お客さん・店員・注文・売上・評判）。部屋を作った人のブラウザだけが計算する
 import {
   GENRE, GENRES, RECIPE, RECIPES, CUSTOMERS, customerMix, crowdCurve, FURN, FURNITURE, FLOORS, WALLS, LEVELS, LOTS,
-  ADS, AD, TROPHIES, makeStaffCandidate, makeCustomRecipe, CUSTOM_DEV_COST, moveCost, START_CAPITAL, BRANCH_FEE, MAX_SHOPS, OPEN_TIME, OPEN_HOUR, CLOSE_HOUR,
+  ADS, AD, TROPHIES, makeStaffCandidate, makeCustomRecipe, CUSTOM_DEV_COST, RECRUIT_COST, moveCost, START_CAPITAL, BRANCH_FEE, MAX_SHOPS, OPEN_TIME, OPEN_HOUR, CLOSE_HOUR,
   CPU_NAMES, KITCHEN_DEPTH,
 } from './data.js';
 import { frame, seatsOf, queueSpot, layoutOk, snapItem, cellsOf, NODES, findPath, nearestNode, ENTRANCES, LOT_NODE } from './geo.js';
@@ -9,6 +9,7 @@ import { rng, clamp, pickWeighted, uid } from './util.js';
 
 const TYPES = Object.keys(CUSTOMERS);
 const SIGN_R = 5.5, SIGN_MAX = 6;
+const OPEN_OPS = new Set(['hire', 'fire', 'recruit']);
 const PUSH_R = 0.75, PUSHABLE = new Set(['pass', 'go', 'follow', 'pushed', 'leave']); // ぶつかって押せる距離・押せるお客さん // 看板に気づく距離・ついて来る人数
 export const POSE = { walk: 0, stand: 1, sit: 2, cook: 3, carry: 4, wave: 5 };
 const PLAYER_COOK = 2.0; // 自分で作ると速い
@@ -793,9 +794,42 @@ export class World {
   cmd(owner, c) {
     const shop = this.shops[owner];
     if (!shop) return { ok: false, msg: 'お店がありません' };
+    // 営業中にできるのは店員のことだけ
+    if (this.phase === 'open' && !OPEN_OPS.has(c.op)) return { ok: false, msg: 'いまは変えられません' };
     const res = applyCmd(this, shop, c);
-    if (res.ok) this.rebuild(owner);
+    if (!res.ok) return res;
+    if (this.phase === 'open') { this.staffChanged(owner, c); return res; }
+    this.rebuild(owner);
     return res;
+  }
+  // 営業中にやとった人はすぐ働きはじめる・やめた人は帰る
+  staffChanged(owner, c) {
+    const rt = this.rt.get(owner), shop = this.shops[owner];
+    if (!rt) return;
+    if (c.op === 'hire') {
+      const s = shop.staff.find((x) => x.id === c.id); if (!s) return;
+      const pos = rt.f.doorOut;
+      const p = this.addPerson({ kind: 'staff', shop: owner, staff: s, x: pos.x, z: pos.z, look: s.look, state: 'idle', speed: 1.5 + s.speed * 0.12 });
+      rt.staffP.push(p.id);
+      this.emote(p, '👋', 2);
+    } else if (c.op === 'fire') {
+      for (const id of [...rt.staffP]) {
+        const p = this.people.get(id);
+        if (!p || p.staff.id !== c.id) continue;
+        const o = p.task?.order != null ? rt.orders.find((x) => x.id === p.task.order) : null;
+        if (o && o.by === p.id) {
+          // 作りかけ・運びかけの料理はほかの人にまかせる
+          if (o.stove != null && rt.stoves[o.stove] === o.id) rt.stoves[o.stove] = null;
+          const slot = o.state === 'carry' ? rt.slots.indexOf(null) : -1;
+          if (slot >= 0) { o.state = 'ready'; o.slot = slot; rt.slots[slot] = o.id; }
+          else if (o.state !== 'ready') { o.state = 'wait'; o.stove = null; if (o.state === 'carry') o.prog = 0; }
+          o.by = null;
+        }
+        if (p.task?.seat != null && rt.seats[p.task.seat]) rt.seats[p.task.seat].cleaner = null;
+        rt.staffP = rt.staffP.filter((x) => x !== id);
+        this.removePerson(id);
+      }
+    }
   }
 
   // ---------- 送る・描く用のデータ ----------
@@ -914,6 +948,12 @@ export function applyCmd(world, shop, c) {
       shop.cands = shop.cands.filter((x) => x !== s); shop.staff.push(s); return { ok: true };
     }
     case 'fire': shop.staff = shop.staff.filter((x) => x.id !== c.id); return { ok: true };
+    case 'recruit': {
+      if (!pay(RECRUIT_COST)) return { ok: false, msg: 'お金が足りません' };
+      const r = rng(Date.now() + shop.lot * 13);
+      shop.cands = [makeStaffCandidate(r, 'cook'), makeStaffCandidate(r, 'hall'), makeStaffCandidate(r), makeStaffCandidate(r)];
+      return { ok: true };
+    }
     case 'ad': {
       const A = AD[c.id]; if (!A) return { ok: false };
       if (A.once ? shop.perm[A.id] : shop.ads[A.id]) return { ok: false, msg: 'もう使っています' };

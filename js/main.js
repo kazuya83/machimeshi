@@ -127,6 +127,7 @@ document.addEventListener('click', async (e) => {
     case 'endday': hostBackToLobby(); break;
     case 'zoom': toggleTownView(); break;
     case 'nextshop': nextShop(); break;
+    case 'staff': openStaffPanel(); break;
     case 'cine': G.cam.cine = !G.cam.cine; toast(G.cam.cine ? '宣伝カメラ（もう一度押すと戻る）' : 'ふつうのカメラ'); break;
     case 'gfx': toast('画質：' + GX.cycleQuality()); break;
     case 'mute': b.textContent = A.toggleMute() ? '🔇' : '🔊'; break;
@@ -147,6 +148,7 @@ document.addEventListener('click', (e) => {
 $('prep').addEventListener('click', (e) => Prep.click(e));
 $('prep-toggle').addEventListener('click', () => { $('prep').classList.remove('hidden'); $('prep-toggle').classList.add('hidden'); });
 $('btn-ready').addEventListener('click', () => {
+  if (G.phase === 'open') { $('prep').classList.add('hidden'); return; }
   const p = G.players.get(G.me); const r = !(p && p.ready);
   if (G.isHost) { setReady(G.me, r); } else G.net.toHost({ k: 'ready', ready: r });
   if (r) { $('prep').classList.add('hidden'); $('prep-toggle').classList.remove('hidden'); }
@@ -382,7 +384,7 @@ function hostOnData(d, conn) {
     case 'setup': if (pid) hostSetupShop(pid, G.players.get(pid).name, d); break;
     case 'ready': if (pid) setReady(pid, !!d.ready); break;
     case 'cmd': {
-      if (!pid || G.phase !== 'prep') { G.net.send(conn, { k: 'cmdres', id: d.id, ok: false, msg: 'いまは変えられません' }); return; }
+      if (!pid || !['prep', 'open'].includes(G.phase)) { G.net.send(conn, { k: 'cmdres', id: d.id, ok: false, msg: 'いまは変えられません' }); return; }
       const sid = sidOf(pid, d.sid);
       const r = G.world.cmd(sid, d.c);
       G.net.send(conn, { k: 'cmdres', id: d.id, ...r });
@@ -608,8 +610,18 @@ function showResult(sum) {
   show('result');
   A.bgmStart('night'); A.sfx.fanfare();
 }
+// 店員をやとう画面（準備中は店員タブ、営業中は店員だけのパネル）
+function openStaffPanel() {
+  if (!['prep', 'open'].includes(G.phase)) return;
+  Prep.tab = 'staff';
+  $('prep').classList.remove('hidden'); $('prep-toggle').classList.add('hidden');
+  refreshPrep();
+}
 function refreshPrep() {
-  if (G.phase !== 'prep' || !G.town) return;
+  if (!G.town) return;
+  if (G.phase === 'open') { if (!$('prep').classList.contains('hidden')) Prep.tab = 'staff'; else return; }
+  else if (G.phase !== 'prep') return;
+  $('prep').classList.toggle('openmode', G.phase === 'open');
   Prep.render({ shop: G.town.shops[curKey()], money: myWallet()?.money, mine: myShops(), freeLots: freeLots(G.town), send: sendCmd, toast, onEdit: () => updateGhost(),
     switchShop, closeShop: doCloseShop, openBranch: doBranch });
   updateReadyBtn();
@@ -617,6 +629,7 @@ function refreshPrep() {
 function updateReadyBtn() {
   const p = G.players.get(G.me);
   const b = $('btn-ready');
+  if (G.phase === 'open') { b.classList.remove('done'); b.textContent = 'とじる'; return; }
   b.classList.toggle('done', !!p?.ready);
   b.textContent = p?.ready ? '準備OK ✓' : '準備OK！';
 }
@@ -746,6 +759,27 @@ addEventListener('keyup', (e) => G.keys.delete(e.code));
 addEventListener('blur', () => G.keys.clear());
 
 function toggleTownView() { G.cam.tDist = G.cam.tDist > 40 ? 15 : 95; }
+
+// ---------- スマホ用のスティック ----------
+const TOUCH = 'ontouchstart' in window || matchMedia('(pointer: coarse)').matches;
+(() => {
+  const base = $('joy'), knob = $('joy-knob');
+  let id = null;
+  const R = 50;
+  const move = (e) => {
+    const r = base.getBoundingClientRect();
+    let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    const d = Math.hypot(dx, dy); if (d > R) { dx *= R / d; dy *= R / d; }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    const m = Math.hypot(dx, dy) / R;
+    G.joy = m < 0.15 ? { x: 0, y: 0 } : { x: dx / R, y: dy / R };
+    if (m >= 0.15) G.autoPause = performance.now() + 2500;
+  };
+  const end = (e) => { if (e.pointerId !== id) return; id = null; G.joy = { x: 0, y: 0 }; knob.style.transform = ''; };
+  base.addEventListener('pointerdown', (e) => { A.initAudio(); id = e.pointerId; base.setPointerCapture(id); move(e); e.preventDefault(); });
+  base.addEventListener('pointermove', (e) => { if (e.pointerId === id) move(e); });
+  base.addEventListener('pointerup', end); base.addEventListener('pointercancel', end);
+})();
 
 const canvas = $('view');
 const pointers = new Map();
@@ -1055,6 +1089,7 @@ function updateMe(dt) {
   if (!G.town || G.phase === 'title' || G.phase === 'lobby' || G.phase === 'result') return;
   let mx = 0, mz = 0;
   const K = G.keys;
+  if (G.joy && (G.joy.x || G.joy.y)) { mx = G.joy.x; mz = G.joy.y; }
   if (!typing()) {
     if (K.has('KeyW') || K.has('ArrowUp')) mz -= 1;
     if (K.has('KeyS') || K.has('ArrowDown')) mz += 1;
@@ -1069,9 +1104,10 @@ function updateMe(dt) {
   if (mx || mz) {
     me.path = []; me.pendingAct = null;
     const yaw = G.cam.yaw, l = Math.hypot(mx, mz);
-    // カメラから見た向き
-    vx = (mx * Math.cos(yaw) + mz * Math.sin(yaw)) / l * speed;
-    vz = (-mx * Math.sin(yaw) + mz * Math.cos(yaw)) / l * speed;
+    // カメラから見た向き（スティックは倒した量で速さが変わる）
+    const sp = speed * Math.min(1, l);
+    vx = (mx * Math.cos(yaw) + mz * Math.sin(yaw)) / l * sp;
+    vz = (-mx * Math.sin(yaw) + mz * Math.cos(yaw)) / l * sp;
   } else if (me.path.length) {
     const t = me.path[0]; const dx = t.x - me.x, dz = t.z - me.z, d = Math.hypot(dx, dz);
     if (d < 0.15) { me.path.shift(); }
@@ -1299,6 +1335,8 @@ function updateHUD(dt) {
   const fol = G.dyn?.people ? G.dyn.people.filter((p) => p.state === 'follow' && p.follow === curKey()).length : 0;
   sb.textContent = G.me3d.sign ? `🪧 看板中${G.isHost && fol ? `（${fol}人）` : ''}` : '🪧 看板を持つ';
   $('btn-nextshop').classList.toggle('hidden', myShops().length < 2);
+  $('joy').classList.toggle('hidden', !TOUCH || !['prep', 'open'].includes(G.phase) || !$('modal').classList.contains('hidden'));
+  $('btn-staff').classList.toggle('hidden', !['prep', 'open'].includes(G.phase) || !myShops().length);
   // 行動ボタン
   const c = myContext();
   const btn = $('act-btn');

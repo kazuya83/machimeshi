@@ -1,7 +1,7 @@
 // 準備のパネル・結果・ランキングの画面
 import {
   GENRE, RECIPES, FURNITURE, FURN, FLOORS, WALLS, LEVELS, LOTS, ADS, ROLES, TROPHIES, PLAYER_COLORS,
-  CUSTOM_BASES, CUSTOM_MAINS, CUSTOM_FLAVORS, CUSTOM_DEV_COST, moveCost, START_CAPITAL, BRANCH_FEE, MAX_SHOPS, buzzName, makeCustomRecipe,
+  CUSTOM_BASES, CUSTOM_MAINS, CUSTOM_FLAVORS, CUSTOM_DEV_COST, RECRUIT_COST, moveCost, START_CAPITAL, BRANCH_FEE, MAX_SHOPS, buzzName, makeCustomRecipe,
 } from './data.js';
 import { recipeOf, playerOf } from './sim.js';
 import { seatCount } from './geo.js';
@@ -84,11 +84,16 @@ export const Prep = {
     const bar = (v) => `<span class="bar"><i style="width:${v * 20}%"></i></span>`;
     const card = (st, btn) => `<div class="item"><span class="ic">${st.role === 'cook' ? '🧑‍🍳' : st.role === 'hall' ? '🤵' : '🙂'}</span>
       <span class="nm">${esc(st.name)}（${ROLES[st.role].name}）<small>腕前 ${bar(st.skill)} 速さ ${bar(st.speed)} 愛想 ${bar(st.charm)}<br>1日の給料 ${yen(st.wage)}</small></span>${btn}</div>`;
+    const room = L.staff - s.staff.length;
     let h = `<div class="sec">はたらいている人（${s.staff.length}/${L.staff}人）</div>`;
+    h += room > 0 ? `<p class="tip">🧑‍🍳 あと${room}人やとえます。下の「はたらきたい人」から選んでね。営業中も右上の 🧑‍🍳 からやとえます。</p>`
+      : `<p class="tip">いまのお店（${L.name}）ではこれ以上やとえません。${LEVELS[s.level + 1] ? `「${LEVELS[s.level + 1].name}」に広げると${LEVELS[s.level + 1].staff}人までやとえます。` : ''}<button class="btn" data-tab="shop">お店を広げる</button></p>`;
     for (const st of s.staff) h += card(st, `<button class="btn" data-c='{"op":"fire","id":"${st.id}"}'>やめてもらう</button>`);
     if (!s.staff.length) h += `<p class="note">店員がいないと、自分がいないときにお店が回りません。</p>`;
     h += `<div class="sec">はたらきたい人（毎日かわります）</div>`;
-    for (const st of s.cands || []) h += card(st, `<button class="btn" data-c='{"op":"hire","id":"${st.id}"}' ${s.staff.length >= L.staff ? 'disabled' : ''}>やとう</button>`);
+    for (const st of s.cands || []) h += card(st, `<button class="btn primary" data-c='{"op":"hire","id":"${st.id}"}' ${room <= 0 ? 'disabled' : ''}>やとう</button>`);
+    if (!(s.cands || []).length) h += `<p class="note">今日はもう応募がありません。</p>`;
+    h += `<div class="item"><span class="nm">求人を出す<small>はたらきたい人を4人、新しく集めます</small></span><button class="btn" data-c='{"op":"recruit"}' ${this.money < RECRUIT_COST ? 'disabled' : ''}>${yen(RECRUIT_COST)}</button></div>`;
     h += `<p class="note">料理人は料理だけ、ホール係は運ぶのと片づけだけ、アルバイトはどちらも少しずつやります。給料は毎日の終わりに払います。</p>`;
     return h;
   },

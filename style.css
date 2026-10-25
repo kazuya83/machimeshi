@@ -156,3 +156,10 @@ table.res .rk { color: #e2572b; font-weight: 800; }
 @keyframes hpblink { to { opacity: 0.6; } }
 body.hit::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 50; background: rgba(255, 30, 30, 0.35); animation: hitflash 0.6s forwards; }
 @keyframes hitflash { to { opacity: 0; } }
+.prep.openmode #prep-tabs button:not([data-tab="staff"]) { display: none; }
+.prep.openmode .tip .btn[data-tab] { display: none; }
+.joy { position: absolute; left: 22px; bottom: 26px; width: 130px; height: 130px; border-radius: 50%; background: rgba(255,255,255,0.18); border: 3px solid rgba(255,255,255,0.55);
+  pointer-events: auto; touch-action: none; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+.joy i { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%; background: rgba(255,255,255,0.85); box-shadow: 0 3px 8px rgba(0,0,0,.35); }
+@media (pointer: coarse) { .hint { bottom: 168px; white-space: normal; max-width: 60%; text-align: center; } }
+@media (max-width: 600px) { .today { top: 158px; font-size: 11px; min-width: 0; } }

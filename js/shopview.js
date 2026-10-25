@@ -244,6 +244,7 @@ export class ShopView {
       for (const sx of [-1, 1]) for (const v of [f.passV - 0.2, D - 0.1]) cyl(0.06, 0.06, 2.6, MAT.wood, sx * (W / 2 - 0.1), 1.3, -v, b, 8);
       const canopy = box(W + 0.6, 0.12, KITCHEN_DEPTH + 1.2, M({ color: G.awning, roughness: 0.8 }), 0, 2.65, -(f.passV + KITCHEN_DEPTH / 2) + 0.3, b);
       canopy.rotation.x = -0.12;
+      this.roofs.push(canopy);
       // のれん
       const noren = new THREE.Mesh(new THREE.PlaneGeometry(W - 1.2, 0.7), M({ color: G.awning, side: THREE.DoubleSide, roughness: 0.95 }));
       noren.position.set(-0.4, 2.15, -f.passV + 0.25); b.add(noren);

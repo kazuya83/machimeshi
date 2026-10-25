@@ -16,6 +16,7 @@ import { yen, stars, hourText, clamp, esc } from './util.js';
 const $ = (id) => document.getElementById(id);
 const LS = Store.local;
 const PARAMS = new URLSearchParams(location.search);
+const SPEED = Math.max(1, Math.min(20, +PARAMS.get('speed') || 1)); // 動作確認用の早送り
 
 // ---------- 描画の準備 ----------
 const GX = createGraphics($('view'));
@@ -1010,7 +1011,8 @@ function updateHUD(dt) {
 let last = performance.now(), tickSend = 0, snapSend = 0, elapsed = 0;
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const rdt = Math.min(0.05, (now - last) / 1000); last = now;
+  const dt = rdt * SPEED;
   elapsed += dt;
   // 親：時間を進める
   if (G.isHost && G.world) {

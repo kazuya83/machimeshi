@@ -665,7 +665,9 @@ function regionAt(x, z) {
     const u = (x - L.x) * (L.side < 0 ? 1 : -1);
     const v = (z - L.side * 7) * L.side;
     if (Math.abs(u) < lv.W / 2 + 1.5 && v > 0 && v < lv.D + 1) {
-      const inside = Math.abs(u) < lv.W / 2 - 0.3 && v > 0.15 && v < lv.D - 1.05;
+      // 入り口（屋台は前が全部あいている）は壁の線を通りぬけられる
+      const door = s.level === 1 || Math.abs(u) < 0.85;
+      const inside = Math.abs(u) < lv.W / 2 - 0.3 && v > (door ? -0.01 : 0.15) && v < lv.D - 1.05;
       return inside ? { k: 'shop', s, u, v, f: frame(s) } : { k: 'block' };
     }
   }
@@ -1073,6 +1075,15 @@ function updateMe(dt) {
     if (pathMode || canMove(me.x, me.z, nx, nz)) { me.x = nx; me.z = nz; }
     else if (canMove(me.x, me.z, nx, me.z)) me.x = nx;
     else if (canMove(me.x, me.z, me.x, nz)) me.z = nz;
+    else {
+      // お店の前の壁にぶつかったら、入り口のほうへすべらせる
+      const r0 = regionAt(me.x, me.z);
+      if (r0.k === 'shop' && r0.v < 1.6) {
+        const d0 = r0.f.door, dx = d0.x - me.x;
+        const sx = me.x + Math.sign(dx) * Math.min(Math.abs(dx), speed * dt);
+        if (canMove(me.x, me.z, sx, me.z)) me.x = sx;
+      }
+    }
     const tr = Math.atan2(vx, vz);
     let d = tr - me.rot; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
     me.rot += d * Math.min(1, dt * 12);
@@ -1331,5 +1342,5 @@ function orderRid(owner, oid) {
 }
 
 // デバッグ・テスト用
-window.__mm = { G, Store, views, camera };
+window.__mm = { G, Store, views, camera, regionAt, canMove };
 void recipeOf; void seatsOf; void GFX; void GFX_NAMES;

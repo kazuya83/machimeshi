@@ -9,7 +9,8 @@ import { rng, clamp, pickWeighted, uid } from './util.js';
 
 const TYPES = Object.keys(CUSTOMERS);
 const SIGN_R = 5.5, SIGN_MAX = 6;
-const OPEN_OPS = new Set(['hire', 'fire', 'recruit']);
+const OPEN_OPS = new Set(['hire', 'fire', 'recruit', 'levelUp', 'autoPlace']);
+const POOP_MAX = 3; // 1人が同時に置けるうんこの数
 const PUSH_R = 0.75, PUSHABLE = new Set(['pass', 'go', 'follow', 'pushed', 'leave']); // ぶつかって押せる距離・押せるお客さん // 看板に気づく距離・ついて来る人数
 export const POSE = { walk: 0, stand: 1, sit: 2, cook: 3, carry: 4, wave: 5 };
 const PLAYER_COOK = 2.0; // 自分で作ると速い
@@ -191,6 +192,7 @@ export class World {
     this.town.day++;
     this.town.lastPlayed = Date.now();
     for (const id of [...this.people.keys()]) this.removePerson(id);
+    this.poops = []; // うんこは夜のうちに片づけられる
     // 体力がなくなったプレイヤーのお店は、この日でおしまい
     for (const [o, shop] of Object.entries(this.shops)) if (shop.closing) { delete this.shops[o]; this.rt.delete(o); }
     // ひと晩休むと体力が少しもどる
@@ -249,6 +251,7 @@ export class World {
     const T = CUSTOMERS[type];
     const rt = this.rt.get(shop.owner);
     if (!rt || shop.closing || !shop.menu.length || !rt.seats.length) return -9;
+    const poop = this.poopPenalty(shop);
     const sale = shop.ads.sale && this.hour >= 17 && this.hour < 19;
     let best = -9;
     for (const m of shop.menu) {
@@ -267,7 +270,7 @@ export class World {
       if (shop.perm.neon && this.hour >= 18) a += 0.4;
       if (sale) a += 0.55;
     }
-    return a;
+    return a - poop;
   }
   chooseByReputation(p) {
     const T = CUSTOMERS[p.type];
@@ -562,6 +565,7 @@ export class World {
       case 'pushed': this.stepPushed(p, dt); break;
       case 'pass': case 'go': case 'leave':
         p.pose = POSE.walk;
+        if (this.poops?.length && !p.emote && this.rnd() < dt * 2 && this.poops.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 2.2)) this.emote(p, '🤢', 1.6);
         if (this.walk(p, dt)) {
           if (p.state === 'go' && p.target) this.arriveShop(p, p.target);
           else if (p.state === 'pass' || p.state === 'leave') this.removePerson(p.id);
@@ -798,9 +802,69 @@ export class World {
     if (this.phase === 'open' && !OPEN_OPS.has(c.op)) return { ok: false, msg: 'いまは変えられません' };
     const res = applyCmd(this, shop, c);
     if (!res.ok) return res;
-    if (this.phase === 'open') { this.staffChanged(owner, c); return res; }
+    if (this.phase === 'open') {
+      if (c.op === 'levelUp' || c.op === 'autoPlace') this.rebuildLive(owner);
+      else this.staffChanged(owner, c);
+      return res;
+    }
     this.rebuild(owner);
     return res;
+  }
+  // 営業中にお店の形が変わったら、座っている人・料理をそのまま新しいお店へうつす
+  rebuildLive(owner) {
+    const old = this.rt.get(owner); if (!old) return;
+    const oldSeats = old.seats;
+    this.rebuild(owner);
+    const rt = this.rt.get(owner);
+    const map = new Map(), used = new Set();
+    oldSeats.forEach((s, i) => {
+      if (!s.occ && !s.dirty) return;
+      let best = -1, bd = 1e9;
+      rt.seats.forEach((n, j) => { if (used.has(j)) return; const d = Math.hypot(n.x - s.x, n.z - s.z); if (d < bd) { bd = d; best = j; } });
+      if (best < 0) return;
+      used.add(best); map.set(i, best);
+      rt.seats[best].occ = s.occ; rt.seats[best].dirty = s.dirty;
+    });
+    for (const p of this.people.values()) {
+      if (p.shop !== owner) continue;
+      if (p.kind === 'staff') { p.task = null; p.carry = null; p.path = []; continue; }
+      if (p.seat == null) continue;
+      if (!map.has(p.seat)) { p.seat = null; this.leave(p, false); continue; }
+      p.seat = map.get(p.seat);
+      const s = rt.seats[p.seat];
+      if (p.state === 'toSeat') p.path = [{ x: s.x, z: s.z }];
+      else { p.x = s.x; p.z = s.z; p.rot = s.rot; }
+    }
+    // 作りかけ・できた料理はコンロと受け取り口に置きなおす
+    for (const o of rt.orders) {
+      if (o.seat != null) o.seat = map.has(o.seat) ? map.get(o.seat) : o.seat;
+      if (o.state === 'cook') { o.state = 'wait'; o.stove = null; o.by = null; }
+      if (o.state === 'carry' && o.by !== 'me') { o.state = 'ready'; o.slot = null; o.by = null; }
+      if (o.state === 'ready') { const i = o.slot != null && o.slot < rt.slots.length && rt.slots[o.slot] == null ? o.slot : rt.slots.indexOf(null); if (i >= 0) { o.slot = i; rt.slots[i] = o.id; } else { o.state = 'wait'; o.slot = null; } }
+    }
+    const av = this.avatars.get(owner); if (av) av.cook = null;
+    this.reflowQueue(rt);
+  }
+  // ---------- うんこ ----------
+  addPoop(by, x, z) {
+    this.poops ||= [];
+    if (this.poops.filter((p) => p.by === by).length >= POOP_MAX) return { ok: false, msg: `うんこは${POOP_MAX}個までです` };
+    this.poops.push({ id: this.nextId++, x, z, by });
+    return { ok: true };
+  }
+  cleanPoop(x, z) {
+    const i = (this.poops || []).findIndex((p) => Math.hypot(p.x - x, p.z - z) < 1.4);
+    if (i < 0) return false;
+    this.poops.splice(i, 1);
+    return true;
+  }
+  // お店の前にうんこがあると、お客さんが近寄りにくい
+  poopPenalty(shop) {
+    if (!this.poops?.length) return 0;
+    const n = NODES[LOT_NODE[shop.lot]];
+    let k = 0;
+    for (const p of this.poops) { const d = Math.hypot(p.x - n.x, p.z - n.z); if (d < 9) k += 1 - d / 10; }
+    return Math.min(3, k * 1.2);
   }
   // 営業中にやとった人はすぐ働きはじめる・やめた人は帰る
   staffChanged(owner, c) {

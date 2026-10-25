@@ -156,7 +156,7 @@ table.res .rk { color: #e2572b; font-weight: 800; }
 @keyframes hpblink { to { opacity: 0.6; } }
 body.hit::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 50; background: rgba(255, 30, 30, 0.35); animation: hitflash 0.6s forwards; }
 @keyframes hitflash { to { opacity: 0; } }
-.prep.openmode #prep-tabs button:not([data-tab="staff"]) { display: none; }
+.prep.openmode #prep-tabs button:not([data-tab="staff"]):not([data-tab="grow"]) { display: none; }
 .prep.openmode .tip .btn[data-tab] { display: none; }
 .joy { position: absolute; left: 22px; bottom: 26px; width: 130px; height: 130px; border-radius: 50%; background: rgba(255,255,255,0.18); border: 3px solid rgba(255,255,255,0.55);
   pointer-events: auto; touch-action: none; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
@@ -168,3 +168,4 @@ body.hit::after { content: ''; position: fixed; inset: 0; pointer-events: none; 
 .item.grow .bar { width: 70px; }
 @media (min-width: 701px) { body.prep-open .rightbar { right: calc(min(400px, 100% - 20px) + 20px); top: 64px; } }
 @media (max-width: 700px) { body.prep-open .rightbar { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; max-width: 60%; } }
+.poop-btn { bottom: 242px; }

@@ -127,8 +127,8 @@ document.addEventListener('click', async (e) => {
     case 'endday': hostBackToLobby(); break;
     case 'zoom': toggleTownView(); break;
     case 'nextshop': nextShop(); break;
-    case 'staff': openStaffPanel(); break;
-    case 'grow': if (G.phase === 'prep') { Prep.tab = 'grow'; $('prep').classList.remove('hidden'); $('prep-toggle').classList.add('hidden'); refreshPrep(); } else toast('お店を広げるのは準備の時間にできます'); break;
+    case 'staff': openStaffPanel('staff'); break;
+    case 'grow': openStaffPanel('grow'); break;
     case 'cine': G.cam.cine = !G.cam.cine; toast(G.cam.cine ? '宣伝カメラ（もう一度押すと戻る）' : 'ふつうのカメラ'); break;
     case 'gfx': toast('画質：' + GX.cycleQuality()); break;
     case 'mute': b.textContent = A.toggleMute() ? '🔇' : '🔊'; break;
@@ -381,6 +381,7 @@ function hostOnData(d, conn) {
     case 'start': if (pid && G.town.shops[pid]) hostStartDay(); break;
     case 'hp': if (pid && G.town.shops[pid]) G.town.shops[pid].hp = clamp(+d.hp || 0, 0, 100); break;
     case 'bankrupt': if (pid) hostBankrupt(pid); break;
+    case 'poop': if (pid) hostPoop(pid, d); break;
     case 'next': if (pid) hostNextDay(); break;
     case 'setup': if (pid) hostSetupShop(pid, G.players.get(pid).name, d); break;
     case 'ready': if (pid) setReady(pid, !!d.ready); break;
@@ -438,7 +439,7 @@ function clientOnData(d) {
   switch (d.k) {
     case 'welcome': G.me = d.pid; break;
     case 'full': lostConnection('この町はもういっぱいです'); break;
-    case 'err': $('lobby-err').textContent = d.msg; break;
+    case 'err': if (d.toast) toast(d.msg); else $('lobby-err').textContent = d.msg; break;
     case 'town': {
       if (G.isHost) return;
       G.town = d.town; G.code = d.code;
@@ -457,6 +458,7 @@ function clientOnData(d) {
     case 'snap': if (!G.isHost) applySnap(d); break;
     case 'tick': if (!G.isHost) G.phaseT = d.t; break;
     case 'result': if (!G.isHost) { G.town = d.town; for (const o of Object.keys(G.town.shops)) bumpShop(o); showResult(d.summary); } break;
+    case 'poops': if (!G.isHost) G.poops = d.list; break;
     case 'cmdres': { const f = G.pending.get(d.id); if (f) { G.pending.delete(d.id); f(d); } break; }
   }
 }
@@ -602,6 +604,7 @@ function enterPhase(ph, t) {
 }
 function showResult(sum) {
   G.summary = sum;
+  G.poops = [];
   G.resultAt = performance.now() + RESULT_WAIT * 1000 / SPEED;
   enterPhase('result');
   setHUD(false);
@@ -613,15 +616,15 @@ function showResult(sum) {
   A.bgmStart('night'); A.sfx.fanfare();
 }
 // 店員をやとう画面（準備中は店員タブ、営業中は店員だけのパネル）
-function openStaffPanel() {
+function openStaffPanel(tab) {
   if (!['prep', 'open'].includes(G.phase)) return;
-  Prep.tab = 'staff';
+  Prep.tab = tab;
   $('prep').classList.remove('hidden'); $('prep-toggle').classList.add('hidden');
   refreshPrep();
 }
 function refreshPrep() {
   if (!G.town) return;
-  if (G.phase === 'open') { if (!$('prep').classList.contains('hidden')) Prep.tab = 'staff'; else return; }
+  if (G.phase === 'open') { if ($('prep').classList.contains('hidden')) return; if (!['staff', 'grow'].includes(Prep.tab)) Prep.tab = 'staff'; }
   else if (G.phase !== 'prep') return;
   $('prep').classList.toggle('openmode', G.phase === 'open');
   Prep.render({ shop: G.town.shops[curKey()], money: myWallet()?.money, mine: myShops(), freeLots: freeLots(G.town), send: sendCmd, toast, onEdit: () => updateGhost(),
@@ -750,6 +753,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyT') toggleTownView();
   if (e.code === 'KeyP' && G.phase === 'open') setAuto(!G.auto);
   if (e.code === 'KeyB') toggleSign();
+  if (e.code === 'KeyU') dropPoop();
   if (e.code === 'Tab') { e.preventDefault(); nextShop(); }
   if (e.code === 'KeyQ') G.cam.cine = !G.cam.cine;
   if (e.code === 'KeyG') toast('画質：' + GX.cycleQuality());
@@ -906,8 +910,10 @@ function myContext() {
   return contextOf(av, v.f, dyn.orders, seats);
 }
 function doAct() {
+  if (G.phase === 'prep') { cleanPoopNear(); return; }
   if (G.phase !== 'open') return;
   const c = myContext();
+  if (!c && cleanPoopNear()) return;
   if (!c || c.k === 'carrying' || c.k === 'cooking' || c.k === 'nocook') {
     if (c?.k === 'carrying') toast('お客さんの席まで運んでね（光っている席）');
     return;
@@ -1221,6 +1227,57 @@ function hostBankrupt(pid) {
   syncViews(true);
   broadcastTown(); save();
 }
+// ---------- うんこ ----------
+let poopCool = 0;
+function dropPoop() {
+  if (!['prep', 'open'].includes(G.phase) || !G.world && G.isHost) return;
+  const me = G.me3d, r = regionAt(me.x, me.z);
+  if (r.k === 'shop') { toast('お店の中には置けません。ほかのお店の前に置いてみよう'); return; }
+  if (performance.now() < poopCool) { toast('少し待ってね'); return; }
+  poopCool = performance.now() + 4000;
+  // 自分のうしろに置く
+  const x = me.x - Math.sin(me.rot) * 0.6, z = me.z - Math.cos(me.rot) * 0.6;
+  if (G.isHost) hostPoop(G.me, { x, z, add: true }); else G.net?.toHost({ k: 'poop', x, z, add: true });
+}
+function cleanPoopNear() {
+  const me = G.me3d;
+  const p = (G.poops || []).find((q) => Math.hypot(q.x - me.x, q.z - me.z) < 1.4);
+  if (!p) return false;
+  if (G.isHost) hostPoop(G.me, { x: me.x, z: me.z, add: false }); else G.net?.toHost({ k: 'poop', x: me.x, z: me.z, add: false });
+  A.sfx.clean(); toast('🧹 うんこを片づけました');
+  return true;
+}
+function hostPoop(pid, d) {
+  const w = G.world; if (!w || !['prep', 'open'].includes(G.phase)) return;
+  const x = clamp(+d.x || 0, -120, 120), z = clamp(+d.z || 0, -120, 120);
+  if (d.add) { const r = w.addPoop(pid, x, z); if (!r.ok) { sendTo(pid, { k: 'err', msg: r.msg, toast: true }); return; } if (pid === G.me) A.sfx.select(); }
+  else if (!w.cleanPoop(x, z)) return;
+  G.poops = w.poops.map((p) => ({ id: p.id, x: p.x, z: p.z }));
+  broadcast({ k: 'poops', list: G.poops });
+}
+const poopMeshes = new Map();
+let poopGeo = null;
+function poopMesh() {
+  if (!poopGeo) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x6b3e1f, roughness: 0.55, metalness: 0.05 });
+    poopGeo = { mat, parts: [[0.26, 0.12, 0.62], [0.2, 0.27, 0.6], [0.13, 0.4, 0.6]] };
+  }
+  const g = new THREE.Group();
+  for (const [r, y, sy] of poopGeo.parts) { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 14, 10), poopGeo.mat); m.scale.y = sy; m.position.y = y; m.castShadow = true; g.add(m); }
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.14, 10), poopGeo.mat); tip.position.y = 0.5; tip.rotation.z = 0.4; g.add(tip);
+  g.scale.setScalar(1.3);
+  return g;
+}
+function syncPoops() {
+  const list = G.phase === 'prep' || G.phase === 'open' ? (G.poops || []) : [];
+  const seen = new Set();
+  for (const p of list) {
+    seen.add(p.id);
+    if (!poopMeshes.has(p.id)) { const m = poopMesh(); m.position.set(p.x, 0.02, p.z); m.rotation.y = p.id; scene.add(m); poopMeshes.set(p.id, m); }
+  }
+  for (const [id, m] of poopMeshes) if (!seen.has(id)) { scene.remove(m); m.traverse((o) => o.geometry?.dispose()); poopMeshes.delete(id); }
+}
+
 // お店がない人（閉店した人・あとから来た人）は、ここで出し直す
 function showRestart() {
   $('modal-body').innerHTML = `<h2>🏪 新しいお店を出そう</h2>${renderSetup(G.town, G.me)}`;
@@ -1281,6 +1338,7 @@ function toggleSign() {
   else toast('看板をおろしました');
 }
 $('sign-btn').addEventListener('click', toggleSign);
+$('poop-btn').addEventListener('click', dropPoop);
 function setAuto(on) {
   if (on) G.me3d.sign = false;
   G.auto = on; LS.set('mm-auto', on ? '1' : '0');
@@ -1331,6 +1389,7 @@ function updateHUD(dt) {
   ab.classList.toggle('hidden', G.phase !== 'open');
   ab.classList.toggle('on', G.auto);
   ab.textContent = G.auto ? '🤖 オート ON' : '🤖 オート OFF';
+  $('poop-btn').classList.toggle('hidden', !['prep', 'open'].includes(G.phase) || !myShops().length);
   const sb = $('sign-btn');
   sb.classList.toggle('hidden', G.phase !== 'open');
   sb.classList.toggle('on', !!G.me3d.sign);
@@ -1344,9 +1403,11 @@ function updateHUD(dt) {
   // 行動ボタン
   const c = myContext();
   const btn = $('act-btn');
-  if (G.phase === 'open' && c) { btn.classList.remove('hidden'); btn.textContent = ACT_LABEL[c.k] || ''; btn.classList.toggle('dim', ['carrying', 'cooking', 'nocook'].includes(c.k)); }
+  const poopNear = !c && (G.poops || []).some((q) => Math.hypot(q.x - G.me3d.x, q.z - G.me3d.z) < 1.4);
+  if (poopNear && ['prep', 'open'].includes(G.phase)) { btn.classList.remove('hidden', 'dim'); btn.textContent = '🧹 うんこ掃除'; }
+  else if (G.phase === 'open' && c) { btn.classList.remove('hidden'); btn.textContent = ACT_LABEL[c.k] || ''; btn.classList.toggle('dim', ['carrying', 'cooking', 'nocook'].includes(c.k)); }
   else btn.classList.toggle('hidden', !(G.phase === 'open' && 'ontouchstart' in window));
-  if (G.phase === 'open' && !c) btn.textContent = '…';
+  if (G.phase === 'open' && !c && !poopNear) btn.textContent = '…';
   let hint = '';
   if (G.phase === 'open') {
     const r = regionAt(G.me3d.x, G.me3d.z);
@@ -1457,6 +1518,7 @@ function loop(now) {
     v.update(G.phase === 'open' ? G.dyn?.shops?.[o] : null, all, elapsed, GX.night, showRoof);
   }
   updatePops(dt);
+  syncPoops();
   updateHUD(dt);
   GX.follow(camTarget.x, camTarget.z, G.cam.dist * 1.1);
   GX.render();

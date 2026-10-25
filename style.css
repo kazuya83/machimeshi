@@ -152,3 +152,7 @@ table.res .rk { color: #e2572b; font-weight: 800; }
 .lotrow .lot small { white-space: nowrap; }
 .sign-btn { bottom: 196px; }
 .sign-btn.on { background: #d9822b; }
+.pill.hp.low { background: rgba(200, 40, 40, 0.85); animation: hpblink 0.8s infinite alternate; }
+@keyframes hpblink { to { opacity: 0.6; } }
+body.hit::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 50; background: rgba(255, 30, 30, 0.35); animation: hitflash 0.6s forwards; }
+@keyframes hitflash { to { opacity: 0; } }

@@ -1,11 +1,11 @@
 // みんなでまちめし 本体：画面の流れ・ロビー・通信・操作・カメラ
 import * as THREE from 'three';
-import { GENRE, LEVELS, LOTS, PREP_TIME, OPEN_TIME, MAX_PLAYERS, PLAYER_COLORS, FURN, buzzName, OPEN_HOUR } from './data.js';
+import { GENRE, LEVELS, LOTS, PREP_TIME, OPEN_TIME, MAX_PLAYERS, PLAYER_COLORS, FURN, buzzName, OPEN_HOUR, START_CAPITAL } from './data.js';
 import { createGraphics, GFX_NAMES, GFX, textSprite } from './graphics.js';
 import { Town } from './town.js';
 import { ShopView } from './shopview.js';
 import { Crowd } from './people.js';
-import { World, newTown, newShop, makeCpuShop, freeLots, awayEarnings, contextOf, POSE, recipeOf, playerOf, walletOf, shopsOf, openBranch, closeBranch } from './sim.js';
+import { World, newTown, newShop, makeCpuShop, freeLots, awayEarnings, contextOf, POSE, recipeOf, playerOf, walletOf, shopsOf, openBranch, closeBranch, bankrupt } from './sim.js';
 import { frame, layoutOk, snapItem, seatsOf, furnSize } from './geo.js';
 import { Net, makeCode } from './net.js';
 import { Store } from './save.js';
@@ -44,11 +44,12 @@ const G = {
   reqId: 1, pending: new Map(),
   today: {},
   lastSave: '',
+  hp: 100, hurtT: 0, stunT: 0, // 体力（車にひかれると減る）
   cur: null, // いま自分が立っているお店（2店目・3店目もある）
   auto: LS.get('mm-auto', '0') === '1', autoT: 0, autoPause: 0,
 };
 // 自分のお店の一覧と、いま働いているお店
-function myShops() { return G.town ? shopsOf(G.town.shops, G.me) : []; }
+function myShops() { return G.town ? shopsOf(G.town.shops, G.me).filter((s) => !s.closing) : []; }
 function curKey() {
   const sh = G.town?.shops; if (!sh) return G.me;
   if (G.cur && sh[G.cur] && !sh[G.cur].cpu && playerOf(sh[G.cur]) === G.me) return G.cur;
@@ -120,7 +121,7 @@ document.addEventListener('click', async (e) => {
     case 'start': if (G.isHost) hostStartDay(); else G.net?.toHost({ k: 'start' }); break;
     case 'open-shop': openMyShop(); break;
     case 'ranking': case 'rank': showRanking(); break;
-    case 'close': $('modal').classList.add('hidden'); break;
+    case 'close': $('modal').classList.add('hidden'); G.restartOpen = false; break;
     case 'ok': $('overlay').classList.add('hidden'); break;
     case 'next': if (G.isHost) hostNextDay(); else G.net?.toHost({ k: 'next' }); break;
     case 'endday': hostBackToLobby(); break;
@@ -137,8 +138,9 @@ document.addEventListener('click', async (e) => {
   }
 });
 document.addEventListener('click', (e) => {
-  const g = e.target.closest('[data-genre]'); if (g) { Setup.genre = g.dataset.genre; Setup.name = $('in-shop')?.value || ''; renderLobby(); }
-  const l = e.target.closest('[data-lot]'); if (l) { Setup.lot = +l.dataset.lot; Setup.name = $('in-shop')?.value || ''; renderLobby(); }
+  const inName = () => (document.querySelector('#modal:not(.hidden) #in-shop') || $('in-shop'))?.value || '';
+  const g = e.target.closest('[data-genre]'); if (g) { Setup.genre = g.dataset.genre; Setup.name = inName(); renderLobby(); if (G.restartOpen) showRestart(); }
+  const l = e.target.closest('[data-lot]'); if (l) { Setup.lot = +l.dataset.lot; Setup.name = inName(); renderLobby(); if (G.restartOpen) showRestart(); }
   const rs = e.target.closest('[data-rs]'); if (rs) { Rank.scope = rs.dataset.rs; showRanking(); }
   const rt = e.target.closest('[data-rt]'); if (rt) { Rank.tab = rt.dataset.rt; showRanking(); }
 });
@@ -309,7 +311,8 @@ function renderLobby() {
 
 function openMyShop() {
   const t = G.town; if (!t) return;
-  const name = ($('in-shop')?.value.trim() || GENRE[Setup.genre].name).slice(0, 12);
+  const inp = document.querySelector('#modal:not(.hidden) #in-shop') || $('in-shop');
+  const name = (inp?.value.trim() || GENRE[Setup.genre].name).slice(0, 12);
   if (Setup.lot == null) { $('lobby-err').textContent = '空いている場所がありません'; return; }
   const req = { name, genre: Setup.genre, lot: Setup.lot };
   if (G.isHost) hostSetupShop(G.me, G.name, req);
@@ -373,6 +376,8 @@ function hostOnData(d, conn) {
       break;
     }
     case 'start': if (pid && G.town.shops[pid]) hostStartDay(); break;
+    case 'hp': if (pid && G.town.shops[pid]) G.town.shops[pid].hp = clamp(+d.hp || 0, 0, 100); break;
+    case 'bankrupt': if (pid) hostBankrupt(pid); break;
     case 'next': if (pid) hostNextDay(); break;
     case 'setup': if (pid) hostSetupShop(pid, G.players.get(pid).name, d); break;
     case 'ready': if (pid) setReady(pid, !!d.ready); break;
@@ -575,6 +580,7 @@ function enterPhase(ph, t) {
   }
   hideScreens(); setHUD(true);
   if (ph === 'prep') {
+    G.hp = G.town.shops[G.me]?.hp ?? 100;
     $('prep').classList.remove('hidden'); $('prep-toggle').classList.add('hidden');
     Prep.tab = 'menu'; refreshPrep(); updateReadyBtn();
     placeMeInShop();
@@ -1055,7 +1061,10 @@ function updateMe(dt) {
     if (K.has('KeyA') || K.has('ArrowLeft')) mx -= 1;
     if (K.has('KeyD') || K.has('ArrowRight')) mx += 1;
   }
-  const speed = 3.6;
+  // 車にひかれた直後は動けない／体力が少ないと遅い
+  G.hurtT = Math.max(0, (G.hurtT || 0) - dt);
+  if (G.stunT > 0) { G.stunT -= dt; mx = 0; mz = 0; me.path = []; me.pendingAct = null; }
+  const speed = G.hp < 30 ? 2.2 : 3.6;
   let vx = 0, vz = 0;
   if (mx || mz) {
     me.path = []; me.pendingAct = null;
@@ -1070,7 +1079,9 @@ function updateMe(dt) {
   }
   me.moving = !!(vx || vz);
   if (me.moving) {
-    const nx = me.x + vx * dt, nz = me.z + vz * dt;
+    let nx = me.x + vx * dt, nz = me.z + vz * dt;
+    // お客さんはすり抜けずに押す（押されたお客さんの動きは親が計算する）
+    [nx, nz] = bumpCustomers(me, nx, nz);
     const pathMode = !mx && !mz && me.path.length;
     if (pathMode || canMove(me.x, me.z, nx, nz)) { me.x = nx; me.z = nz; }
     else if (canMove(me.x, me.z, nx, me.z)) me.x = nx;
@@ -1088,6 +1099,7 @@ function updateMe(dt) {
     let d = tr - me.rot; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
     me.rot += d * Math.min(1, dt * 12);
   }
+  checkCars();
   // 自分の別のお店に入ったら、そのお店で働く
   const here = regionAt(me.x, me.z);
   if (here.k === 'shop' && !here.s.cpu && playerOf(here.s) === G.me && here.s.owner !== curKey()) {
@@ -1112,6 +1124,70 @@ function updateMe(dt) {
     posSendT -= dt;
     if (posSendT <= 0 && G.net) { posSendT = 0.1; G.net.toHost({ k: 'pos', sid: curKey(), sg: me.sign ? 1 : 0, x: Math.round(me.x * 100) / 100, z: Math.round(me.z * 100) / 100, rot: Math.round(me.rot * 100) / 100, m: me.moving ? 1 : 0 }); }
   }
+}
+
+// ---------- お客さんを押す・車にひかれる ----------
+const BODY = 0.55;
+function bumpCustomers(me, nx, nz) {
+  if (G.phase !== 'open') return [nx, nz];
+  const list = G.isHost ? (G.dyn?.people || []) : [...G.ppl.values()];
+  for (const p of list) {
+    if (p.kind !== 'cust' || p.pose === POSE.sit) continue;
+    const dx = nx - p.x, dz = nz - p.z, d = Math.hypot(dx, dz);
+    if (d >= BODY || d < 1e-4) continue;
+    if (!G.isHost) {
+      // 子は見た目だけ先に押しておく（すぐに親の位置で上書きされる）
+      const k = (BODY - d) * 0.8;
+      p.x -= dx / d * k; p.z -= dz / d * k; p.tx = p.x; p.tz = p.z;
+    }
+    const d2 = Math.hypot(nx - p.x, nz - p.z) || 1e-4;
+    if (d2 < BODY * 0.8) { nx = p.x + (nx - p.x) / d2 * BODY * 0.8; nz = p.z + (nz - p.z) / d2 * BODY * 0.8; }
+  }
+  return [nx, nz];
+}
+function checkCars() {
+  if (!['prep', 'open'].includes(G.phase) || G.hurtT > 0 || !myShops().length) return;
+  const me = G.me3d;
+  for (const c of town3d.cars) {
+    const p = c.g.position;
+    const along = c.onCross ? me.z - p.z : me.x - p.x, side = c.onCross ? me.x - p.x : me.z - p.z;
+    if (Math.abs(along) > 2.4 || Math.abs(side) > 1.2) continue;
+    // はねとばされて歩道のほうへ
+    const dir = Math.sign(side) || 1, push = 2.6;
+    if (c.onCross) me.x = p.x + dir * push; else me.z = p.z + dir * push;
+    me.path = []; me.pendingAct = null;
+    G.hp = Math.max(0, G.hp - 30); G.hurtT = 1.5; G.stunT = 0.8;
+    A.sfx.angry();
+    document.body.classList.remove('hit'); void document.body.offsetWidth; document.body.classList.add('hit');
+    sendHp();
+    if (G.hp <= 0) goBankrupt();
+    else toast(`🚗 車にひかれた！ 体力 −30（のこり ${G.hp}）`);
+    return;
+  }
+}
+
+// 体力は1店目に記録する（日をまたいでも残る）
+function sendHp() {
+  const hp = Math.round(G.hp);
+  if (G.isHost) { const s = G.town.shops[G.me]; if (s) s.hp = hp; }
+  else G.net?.toHost({ k: 'hp', hp });
+}
+function goBankrupt() {
+  G.me3d.sign = false; G.auto = false; G.stunT = 2;
+  if (G.isHost) hostBankrupt(G.me); else G.net?.toHost({ k: 'bankrupt' });
+  overlay(`<h2>💀 たおれてしまった…</h2><p>体力がなくなり、お店はすべて閉店です。</p><p>${G.phase === 'open' ? '今日の営業が終わったら' : 'このあとすぐ'}、資本金 ${yen(START_CAPITAL)} から新しいお店を出し直せます。</p><p class="note">車には気をつけよう！</p>`);
+  A.sfx.angry();
+}
+function hostBankrupt(pid) {
+  bankrupt(G.world, pid);
+  syncViews(true);
+  broadcastTown(); save();
+}
+// お店がない人（閉店した人・あとから来た人）は、ここで出し直す
+function showRestart() {
+  $('modal-body').innerHTML = `<h2>🏪 新しいお店を出そう</h2>${renderSetup(G.town, G.me)}`;
+  $('modal').classList.remove('hidden');
+  G.restartOpen = true;
 }
 
 // ---------- オートプレイ：自分のキャラが自分で作る・運ぶ・片づける ----------
@@ -1191,6 +1267,13 @@ function updateHUD(dt) {
     $('hud-money').textContent = yen(myWallet().money);
     $('hud-rating').textContent = `${stars(s.rating)} ${s.rating.toFixed(2)}`;
   }
+  // お店がなければ出し直しの画面
+  const noShop = ['prep', 'open'].includes(G.phase) && !Object.values(t.shops).some((x) => !x.cpu && playerOf(x) === G.me);
+  if (noShop && !G.restartOpen && $('overlay').classList.contains('hidden')) showRestart();
+  if (!noShop && G.restartOpen) { G.restartOpen = false; $('modal').classList.add('hidden'); G.hp = 100; sendHp(); placeMeInShop(); refreshPrep(); }
+  const hpEl = $('hud-hp');
+  hpEl.textContent = `❤️ ${Math.ceil(G.hp)}`;
+  hpEl.classList.toggle('low', G.hp < 30);
   $('hud-buzz-bar').style.width = `${Math.round(t.buzz)}%`;
   $('hud-buzz-name').textContent = buzzName(t.buzz);
   const dyn = G.dyn?.shops?.[curKey()];

@@ -9,7 +9,7 @@ import { rng, clamp, pickWeighted, uid } from './util.js';
 
 const TYPES = Object.keys(CUSTOMERS);
 const SIGN_R = 5.5, SIGN_MAX = 6;
-const PUSH_R = 0.75, PUSHABLE = new Set(['pass', 'go', 'follow', 'pushed']); // ぶつかって押せる距離・押せるお客さん // 看板に気づく距離・ついて来る人数
+const PUSH_R = 0.75, PUSHABLE = new Set(['pass', 'go', 'follow', 'pushed', 'leave']); // ぶつかって押せる距離・押せるお客さん // 看板に気づく距離・ついて来る人数
 export const POSE = { walk: 0, stand: 1, sit: 2, cook: 3, carry: 4, wave: 5 };
 const PLAYER_COOK = 2.0; // 自分で作ると速い
 const MAX_PEOPLE = 170;
@@ -190,6 +190,10 @@ export class World {
     this.town.day++;
     this.town.lastPlayed = Date.now();
     for (const id of [...this.people.keys()]) this.removePerson(id);
+    // 体力がなくなったプレイヤーのお店は、この日でおしまい
+    for (const [o, shop] of Object.entries(this.shops)) if (shop.closing) { delete this.shops[o]; this.rt.delete(o); }
+    // ひと晩休むと体力が少しもどる
+    for (const shop of Object.values(this.shops)) if (!shop.cpu && shop.hp != null) shop.hp = Math.min(100, shop.hp + 25);
     this.phase = 'result';
     return summary;
   }
@@ -243,7 +247,7 @@ export class World {
   appeal(shop, type, passing) {
     const T = CUSTOMERS[type];
     const rt = this.rt.get(shop.owner);
-    if (!rt || !shop.menu.length || !rt.seats.length) return -9;
+    if (!rt || shop.closing || !shop.menu.length || !rt.seats.length) return -9;
     const sale = shop.ads.sale && this.hour >= 17 && this.hour < 19;
     let best = -9;
     for (const m of shop.menu) {
@@ -281,7 +285,7 @@ export class World {
   // お店に着いた
   arriveShop(p, owner) {
     const shop = this.shops[owner], rt = this.rt.get(owner);
-    if (!shop || !rt || this.hour >= CLOSE_HOUR - 0.15) return this.resume(p);
+    if (!shop || !rt || shop.closing || this.hour >= CLOSE_HOUR - 0.15) return this.resume(p);
     p.shop = owner;
     const seat = this.freeSeat(rt);
     if (seat >= 0 && rt.queue.length === 0) return this.sitDown(p, rt, seat);
@@ -478,7 +482,7 @@ export class World {
         p.pushT = 0; p.rot = Math.atan2(-dx, -dz);
         const lot = LOTS.find((L) => Math.abs(p.x - L.x) < 7 && p.z * L.side > 6.6);
         const shop = lot && Object.values(this.shops).find((x) => x.lot === lot.id);
-        if (shop) { p.follow = null; p.noSign = true; p.target = null; this.arriveShop(p, shop.owner); }
+        if (shop && p.before !== 'leave') { p.follow = null; p.noSign = true; p.target = null; this.arriveShop(p, shop.owner); }
       }
     }
   }
@@ -491,6 +495,7 @@ export class World {
     if (p.before === 'go' && p.target && this.shops[p.target]) {
       p.state = 'go'; this.route(p, nearestNode(p.x, p.z), LOT_NODE[this.shops[p.target].lot]); return;
     }
+    if (p.before === 'leave') p.hungry = false; // 食べ終わった人はまっすぐ帰る
     this.resume(p);
   }
   stepFollow(p, dt) {
@@ -960,6 +965,14 @@ export function openBranch(world, pid, req) {
   return { ok: true, sid: shop.owner };
 }
 // 2店目以降をたたむ（土地は7割で売れる）
+// 体力が0：その人のお店はぜんぶ閉店（営業中なら、その日の終わりに消える）
+export function bankrupt(world, pid) {
+  for (const s of shopsOf(world.shops, pid)) {
+    world.avatars.delete(s.owner);
+    if (world.phase === 'open') s.closing = true;
+    else { delete world.shops[s.owner]; world.rebuild(s.owner); }
+  }
+}
 export function closeBranch(world, pid, sid) {
   const shop = world.shops[sid];
   if (!shop || sid === pid || playerOf(shop) !== pid) return { ok: false, msg: '1店目はたためません' };
